@@ -5,8 +5,8 @@ import Html.Events exposing (onInput, onClick)
 import Html.Attributes exposing (disabled, placeholder, value, class, classList)
 import Html.Events.Extra exposing (onEnter)
 import Http
-import Json.Decode as Decode
-import Json.Decode.Extra as DecodeExtra
+import Json.Decode as Json
+import Json.Decode.Extra as JsonExtra
 import String
 import Date
 import Time
@@ -266,9 +266,9 @@ getAuthData username password =
         Http.send LoginResponse (Http.get url decodeAuthData)
 
 
-decodeAuthData : Decode.Decoder AuthData
+decodeAuthData : Json.Decoder AuthData
 decodeAuthData =
-    Decode.map3 AuthData
-        (Decode.field "token" Decode.string)
-        (Decode.map Date.toTime (Decode.field "expire" DecodeExtra.date))
-        (Decode.field "role" Decode.int)
+    Json.map3 AuthData
+        (Json.field "token" Json.string)
+        (Json.map Date.toTime (Json.field "expire" JsonExtra.date))
+        (Json.field "role" Json.int)

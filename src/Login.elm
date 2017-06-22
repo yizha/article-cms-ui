@@ -1,11 +1,7 @@
 module Login exposing (Model, Msg, update, init, view, subscriptions)
 
-import Html exposing (..)
-
-
---import Html.Attributes exposing (..)
-
-import Html.Events exposing (..)
+import Html exposing (Html, div, input, p, text, button)
+import Html.Events exposing (onInput, onClick)
 import Html.Attributes exposing (disabled, placeholder, value, class, classList)
 import Html.Events.Extra exposing (onEnter)
 import Http

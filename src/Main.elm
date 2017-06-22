@@ -1,4 +1,4 @@
-module Main exposing (..)
+module Main exposing (main)
 
 import Html exposing (Html, div, nav)
 import Html.Attributes exposing (class)
@@ -87,8 +87,5 @@ view model =
 
 subscriptions : Model -> Sub Msg
 subscriptions model =
-    let
-        subs =
-            [ Sub.map Login (Login.subscriptions model.login) ]
-    in
-        Sub.batch subs
+    Sub.batch
+        [ Sub.map Login (Login.subscriptions model.login) ]

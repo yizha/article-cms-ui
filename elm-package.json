@@ -2,7 +2,7 @@
     "version": "1.0.0",
     "summary": "Frontend of a simple Article CMS",
     "repository": "https://github.com/yizha/article-cms-ui.git",
-    "license": "BSD3",
+    "license": "MIT",
     "source-directories": [
         "src"
     ],

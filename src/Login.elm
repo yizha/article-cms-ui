@@ -120,22 +120,22 @@ update msg model =
 
         LoginRequest ->
             if model.username /= "" && model.password /= "" && model.state == Unauthorized then
-                ( debug "login" { model | state = InProgress }
+                ( debug "login-request" { model | state = InProgress }
                 , getAuthData model.username model.password
                 )
             else
                 ( model, Cmd.none )
 
         LoginResponse (Ok authdata) ->
-            ( debug "login" { model | authdata = authdata, state = Authorized, error = "" }
+            ( debug "login-resp-ok" { model | authdata = authdata, state = Authorized, error = "" }
             , Task.perform LogUserActivity Time.now
             )
 
         LoginResponse (Err err) ->
-            ( debug "login" { model | state = Unauthorized, error = (getLoginError err) }, Cmd.none )
+            ( debug "login-resp-err" { model | state = Unauthorized, error = (getLoginError err) }, Cmd.none )
 
         Logout ->
-            ( debug "login" initModel, Cmd.none )
+            ( debug "login-logout" initModel, Cmd.none )
 
         UserActivity ->
             ( model, Task.perform LogUserActivity Time.now )
@@ -144,7 +144,7 @@ update msg model =
             ( { model | lastUserActivityTime = time }, Cmd.none )
 
         CheckIdleTimeout time ->
-            ( debug "login" (checkIdleTimeout time model), Cmd.none )
+            ( debug "login-check" (checkIdleTimeout time model), Cmd.none )
 
 
 

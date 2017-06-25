@@ -15,7 +15,6 @@ module Auth
         )
 
 import List
-import Time
 import Bitwise
 
 

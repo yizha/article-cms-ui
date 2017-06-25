@@ -19,12 +19,6 @@ import Util.Debug exposing (debug)
 -- MODEL
 
 
-type State
-    = Unauthorized
-    | InProgress
-    | Authorized
-
-
 type alias AuthData =
     { token : String
     , expire : Time.Time
@@ -32,30 +26,27 @@ type alias AuthData =
     }
 
 
+type State
+    = Unauthorized (Maybe Http.Error)
+    | LoginInProgress
+    | Authorized AuthData
+
+
 type alias Model =
     { username : String
     , password : String
-    , authdata : AuthData
-    , error : String
     , state : State
-    , lastUserActivityTime : Time.Time
+    , lastUserActivityTime : Maybe Time.Time
     , maxIdleTime : Time.Time
     }
-
-
-initAuthData : AuthData
-initAuthData =
-    AuthData "" 0 0
 
 
 initModel : Model
 initModel =
     { username = ""
     , password = ""
-    , authdata = initAuthData
-    , error = ""
-    , state = Unauthorized
-    , lastUserActivityTime = 0
+    , state = Unauthorized Nothing
+    , lastUserActivityTime = Nothing
     , maxIdleTime = (Time.minute * 30)
     }
 
@@ -82,8 +73,8 @@ type Msg
     | CheckIdleTimeout Time.Time
 
 
-getLoginError : Http.Error -> String
-getLoginError err =
+getAuthError : Http.Error -> String
+getAuthError err =
     case err of
         Http.BadUrl desc ->
             "BadUrl: " ++ desc
@@ -103,10 +94,15 @@ getLoginError err =
 
 checkIdleTimeout : Time.Time -> Model -> Model
 checkIdleTimeout now model =
-    if now - model.lastUserActivityTime > model.maxIdleTime then
-        initModel
-    else
-        model
+    case model.lastUserActivityTime of
+        Just t ->
+            if now - t > model.maxIdleTime then
+                initModel
+            else
+                model
+
+        Nothing ->
+            model
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -119,20 +115,20 @@ update msg model =
             ( { model | password = password }, Cmd.none )
 
         LoginRequest ->
-            if model.username /= "" && model.password /= "" && model.state == Unauthorized then
-                ( debug "login-request" { model | state = InProgress }
-                , getAuthData model.username model.password
-                )
-            else
+            if disableLoginBtn model then
                 ( model, Cmd.none )
+            else
+                ( debug "login-request" { model | state = LoginInProgress }
+                , doLogin model.username model.password
+                )
 
         LoginResponse (Ok authdata) ->
-            ( debug "login-resp-ok" { model | authdata = authdata, state = Authorized, error = "" }
+            ( debug "login-ok" { model | state = Authorized authdata }
             , Task.perform LogUserActivity Time.now
             )
 
         LoginResponse (Err err) ->
-            ( debug "login-resp-err" { model | state = Unauthorized, error = (getLoginError err) }, Cmd.none )
+            ( debug "login-ng" { model | state = Unauthorized (Just err) }, Cmd.none )
 
         Logout ->
             ( debug "login-logout" initModel, Cmd.none )
@@ -141,7 +137,7 @@ update msg model =
             ( model, Task.perform LogUserActivity Time.now )
 
         LogUserActivity time ->
-            ( { model | lastUserActivityTime = time }, Cmd.none )
+            ( { model | lastUserActivityTime = Just time }, Cmd.none )
 
         CheckIdleTimeout time ->
             ( debug "login-check" (checkIdleTimeout time model), Cmd.none )
@@ -153,7 +149,35 @@ update msg model =
 
 disableLoginBtn : Model -> Bool
 disableLoginBtn model =
-    (model.username == "") || (model.password == "") || (model.state /= Unauthorized)
+    if model.username == "" || model.password == "" then
+        True
+    else
+        case model.state of
+            Unauthorized _ ->
+                False
+
+            _ ->
+                True
+
+
+disableLogoutBtn : Model -> Bool
+disableLogoutBtn model =
+    case model.state of
+        Authorized _ ->
+            False
+
+        _ ->
+            True
+
+
+disableLoginInput : Model -> Bool
+disableLoginInput model =
+    case model.state of
+        Unauthorized _ ->
+            False
+
+        _ ->
+            True
 
 
 logoutDiv : Model -> Html Msg
@@ -168,7 +192,7 @@ logoutDiv model =
                 [ p [ class "control" ]
                     [ button
                         [ class "button is-warning"
-                        , disabled (model.state /= Authorized)
+                        , disabled (disableLogoutBtn model)
                         , onClick Logout
                         ]
                         [ text "Logout" ]
@@ -180,7 +204,20 @@ logoutDiv model =
 
 fieldErr : Model -> String -> Bool
 fieldErr model fieldName =
-    model.error /= "" && (String.contains fieldName (String.toLower model.error))
+    case model.state of
+        Unauthorized err ->
+            case err of
+                Just (Http.BadStatus resp) ->
+                    if resp.status.code == 403 && (String.toLower resp.body) == fieldName then
+                        True
+                    else
+                        False
+
+                _ ->
+                    False
+
+        _ ->
+            False
 
 
 loginDiv : Model -> Html Msg
@@ -192,12 +229,12 @@ loginDiv model =
                     [ input
                         [ classList
                             [ ( "input", True )
-                            , ( "is-danger", fieldErr model "user" )
+                            , ( "is-danger", fieldErr model "username" )
                             ]
                         , onInput Username
                         , placeholder "Username"
                         , onEnter LoginRequest
-                        , disabled (model.state /= Unauthorized)
+                        , disabled (disableLoginInput model)
                         , value model.username
                         ]
                         []
@@ -211,14 +248,14 @@ loginDiv model =
                         , onInput Password
                         , placeholder "Password"
                         , onEnter LoginRequest
-                        , disabled (model.state /= Unauthorized)
+                        , disabled (disableLoginInput model)
                         , value model.password
                         ]
                         []
                     ]
                 , p [ class "control" ]
                     [ button
-                        [ class "button is-primary"
+                        [ class "button"
                         , disabled (disableLoginBtn model)
                         , onClick LoginRequest
                         ]
@@ -231,10 +268,12 @@ loginDiv model =
 
 view : Model -> Html Msg
 view model =
-    if model.state == Authorized then
-        logoutDiv model
-    else
-        loginDiv model
+    case model.state of
+        Authorized _ ->
+            logoutDiv model
+
+        _ ->
+            loginDiv model
 
 
 
@@ -243,22 +282,24 @@ view model =
 
 subscriptions : Model -> Sub Msg
 subscriptions model =
-    if model.state == Authorized then
-        Sub.batch
-            [ Mouse.clicks (\_ -> UserActivity)
-            , Keyboard.presses (\_ -> UserActivity)
-            , Time.every Time.minute CheckIdleTimeout
-            ]
-    else
-        Sub.none
+    case model.state of
+        Authorized _ ->
+            Sub.batch
+                [ Mouse.clicks (\_ -> UserActivity)
+                , Keyboard.presses (\_ -> UserActivity)
+                , Time.every Time.minute CheckIdleTimeout
+                ]
+
+        _ ->
+            Sub.none
 
 
 
 -- HTTP
 
 
-getAuthData : String -> String -> Cmd Msg
-getAuthData username password =
+doLogin : String -> String -> Cmd Msg
+doLogin username password =
     let
         url =
             "/api/login?username=" ++ username ++ "&password=" ++ password

@@ -1,7 +1,7 @@
 module Main exposing (main)
 
-import Html exposing (Html, div, nav)
-import Html.Attributes exposing (class)
+import Html exposing (Html, div, nav, p, a, text, strong)
+import Html.Attributes exposing (class, style)
 import Http
 import Date
 import Time
@@ -71,14 +71,10 @@ update msg model =
 
 view : Model -> Html Msg
 view model =
-    div []
-        [ Html.node "link" [ Html.Attributes.rel "stylesheet", Html.Attributes.href "bulma.css" ] []
-        , nav [ class "level" ]
-            [ div [ class "level-left" ]
-                []
-            , Html.map Login (Login.view model.login)
-            ]
-        ]
+    if Login.authorized model.login then
+        div [] [ text "logged in" ]
+    else
+        Html.map Login (Login.view model.login)
 
 
 

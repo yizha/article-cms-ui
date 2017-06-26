@@ -12,6 +12,7 @@ module Login
 import Html exposing (..)
 import Html.Attributes exposing (href, class, style)
 import Html.Events
+import Dom
 import Date
 import Time
 import Http
@@ -132,7 +133,7 @@ initModel =
 
 init : ( Model, Cmd Msg )
 init =
-    ( initModel, Cmd.none )
+    ( initModel, Task.attempt ignore (Dom.focus "login_username") )
 
 
 
@@ -140,7 +141,8 @@ init =
 
 
 type Msg
-    = Username String
+    = Ignore
+    | Username String
     | Password String
     | LoginRequest
     | LoginResponse (Result Http.Error AuthData)
@@ -150,6 +152,11 @@ type Msg
     | CheckIdleTimeout Time.Time
     | Snackbar (MSnackbar.Msg Int)
     | Mdl (Material.Msg Msg)
+
+
+ignore : a -> Msg
+ignore =
+    always Ignore
 
 
 checkIdleTimeout : Time.Time -> Model -> Model
@@ -190,13 +197,19 @@ handleLoginErr err model =
                 in
                     ( { newModel | snackbar = sbModel }, Cmd.map Snackbar sbCmd )
 
-            _ ->
-                ( newModel, Cmd.none )
+            NoSuchUser _ _ ->
+                ( newModel, Task.attempt ignore (Dom.focus "login_username") )
+
+            WrongPassword _ _ ->
+                ( newModel, Task.attempt ignore (Dom.focus "login_password") )
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+        Ignore ->
+            model ! [ Cmd.none ]
+
         Username username ->
             { model | username = username } ! [ Cmd.none ]
 
@@ -305,7 +318,8 @@ view model =
                             [ MTextfield.render Mdl
                                 [ 0 ]
                                 model.mdl
-                                [ MTextfield.label "Username"
+                                [ MOptions.id "login_username"
+                                , MTextfield.label "Username"
                                 , MTextfield.floatingLabel
                                 , MTextfield.text_
                                 , MTextfield.value model.username
@@ -322,7 +336,8 @@ view model =
                             [ MTextfield.render Mdl
                                 [ 1 ]
                                 model.mdl
-                                [ MTextfield.label "Password"
+                                [ MOptions.id "login_password"
+                                , MTextfield.label "Password"
                                 , MTextfield.floatingLabel
                                 , MTextfield.password
                                 , MTextfield.value model.password

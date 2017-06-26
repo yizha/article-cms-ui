@@ -5,7 +5,10 @@ import Html.Attributes exposing (class, style)
 import Http
 import Date
 import Time
+import Global
 import Login
+import Users
+import Util.Debug exposing (debug)
 
 
 main =
@@ -23,6 +26,7 @@ main =
 
 type alias Model =
     { login : Login.Model
+    , users : Users.Model
     }
 
 
@@ -32,10 +36,16 @@ init =
         ( login_m, login_cmd ) =
             Login.init
 
+        ( users_m, users_cmd ) =
+            Users.init
+
         cmds =
-            [ (Cmd.map Login login_cmd) ]
+            [ (Cmd.map Login login_cmd)
+            , (Cmd.map Users users_cmd)
+            ]
     in
         ( { login = login_m
+          , users = users_m
           }
         , Cmd.batch cmds
         )
@@ -47,15 +57,66 @@ init =
 
 type Msg
     = Login Login.Msg
+    | Users Users.Msg
+
+
+handleGlobalEvent : Model -> Global.Event -> ( Model, List (Cmd Msg) )
+handleGlobalEvent model e =
+    case e of
+        Global.None ->
+            ( model, [] )
+
+        Global.Login ->
+            let
+                ( loginM, loginCmd ) =
+                    Login.login model.login
+
+                ( usersM, usersCmd ) =
+                    Users.login model.users
+            in
+                ( { model | login = loginM, users = usersM }
+                , [ Cmd.map Login loginCmd
+                  , Cmd.map Users usersCmd
+                  ]
+                )
+
+        Global.Logout ->
+            let
+                ( loginM, loginCmd ) =
+                    Login.logout model.login
+
+                ( usersM, usersCmd ) =
+                    Users.logout model.users
+            in
+                ( { model | login = loginM, users = usersM }
+                , [ Cmd.map Login loginCmd
+                  , Cmd.map Users usersCmd
+                  ]
+                )
 
 
 handleLogin : Login.Msg -> Model -> ( Model, Cmd Msg )
 handleLogin login_msg model =
     let
-        ( m, cmd ) =
+        ( m, cmd, e ) =
             Login.update login_msg model.login
+
+        ( newModel, cmds ) =
+            handleGlobalEvent { model | login = m } e
     in
-        ( { model | login = m }, Cmd.map Login cmd )
+        ( newModel, Cmd.batch ((Cmd.map Login cmd) :: cmds) )
+
+
+handleUsers : Users.Msg -> Model -> ( Model, Cmd Msg )
+handleUsers users_msg model =
+    let
+        ( m, cmd, e ) =
+            Users.update users_msg model.users
+
+        ( newModel, cmds ) =
+            handleGlobalEvent { model | users = m } e
+    in
+        ( newModel, Cmd.batch ((Cmd.map Users cmd) :: cmds) )
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -63,6 +124,9 @@ update msg model =
     case msg of
         Login login_msg ->
             handleLogin login_msg model
+
+        Users users_msg ->
+            handleUsers users_msg model
 
 
 
@@ -72,7 +136,7 @@ update msg model =
 view : Model -> Html Msg
 view model =
     if Login.authorized model.login then
-        div [] [ text "logged in" ]
+        Html.map Users (Users.view model.users)
     else
         Html.map Login (Login.view model.login)
 
@@ -84,4 +148,6 @@ view model =
 subscriptions : Model -> Sub Msg
 subscriptions model =
     Sub.batch
-        [ Sub.map Login (Login.subscriptions model.login) ]
+        [ Sub.map Login (Login.subscriptions model.login)
+        , Sub.map Users (Users.subscriptions model.users)
+        ]

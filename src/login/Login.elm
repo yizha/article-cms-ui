@@ -7,8 +7,11 @@ module Login
         , init
         , subscriptions
         , authorized
+        , login
+        , logout
         )
 
+import Global
 import Html exposing (..)
 import Html.Attributes exposing (href, class, style)
 import Html.Events
@@ -119,6 +122,16 @@ authorized model =
             False
 
 
+login : Model -> ( Model, Cmd Msg )
+login model =
+    ( model, Cmd.none )
+
+
+logout : Model -> ( Model, Cmd Msg )
+logout model =
+    ( initModel, Task.attempt ignore (Dom.focus "login_username") )
+
+
 initModel : Model
 initModel =
     { username = ""
@@ -146,7 +159,6 @@ type Msg
     | Password String
     | LoginRequest
     | LoginResponse (Result Http.Error AuthData)
-    | Logout
     | UserActivity
     | LogUserActivity Time.Time
     | CheckIdleTimeout Time.Time
@@ -172,7 +184,7 @@ checkIdleTimeout now model =
             model
 
 
-handleLoginErr : Http.Error -> Model -> ( Model, Cmd Msg )
+handleLoginErr : Http.Error -> Model -> ( Model, Cmd Msg, Global.Event )
 handleLoginErr err model =
     let
         authErr =
@@ -195,55 +207,66 @@ handleLoginErr err model =
                     ( sbModel, sbCmd ) =
                         MSnackbar.add contents model.snackbar
                 in
-                    ( { newModel | snackbar = sbModel }, Cmd.map Snackbar sbCmd )
+                    ( { newModel | snackbar = sbModel }, Cmd.map Snackbar sbCmd, Global.None )
 
             NoSuchUser _ _ ->
-                ( newModel, Task.attempt ignore (Dom.focus "login_username") )
+                ( newModel, Task.attempt ignore (Dom.focus "login_username"), Global.None )
 
             WrongPassword _ _ ->
-                ( newModel, Task.attempt ignore (Dom.focus "login_password") )
+                ( newModel, Task.attempt ignore (Dom.focus "login_password"), Global.None )
 
 
-update : Msg -> Model -> ( Model, Cmd Msg )
+update : Msg -> Model -> ( Model, Cmd Msg, Global.Event )
 update msg model =
     case msg of
         Ignore ->
-            model ! [ Cmd.none ]
+            ( model, Cmd.none, Global.None )
 
         Username username ->
-            { model | username = username } ! [ Cmd.none ]
+            ( { model | username = username }, Cmd.none, Global.None )
 
         Password password ->
-            { model | password = password } ! [ Cmd.none ]
+            ( { model | password = password }, Cmd.none, Global.None )
 
         LoginRequest ->
-            debug "login-request" { model | state = InProgress } ! [ login model.username model.password ]
+            ( debug "login-request" { model | state = InProgress }
+            , getAuthData model.username model.password
+            , Global.None
+            )
 
         LoginResponse (Ok authdata) ->
-            debug "login-ok" { model | state = Authorized authdata } ! [ Task.perform LogUserActivity Time.now ]
+            ( debug "login-ok" { model | state = Authorized authdata }
+            , Task.perform LogUserActivity Time.now
+            , Global.Login
+            )
 
         LoginResponse (Err err) ->
             handleLoginErr err model
 
-        Logout ->
-            ( debug "login-logout" initModel, Cmd.none )
-
         UserActivity ->
-            ( model, Task.perform LogUserActivity Time.now )
+            ( model, Task.perform LogUserActivity Time.now, Global.None )
 
         LogUserActivity time ->
-            ( { model | lastActivityTime = Just time }, Cmd.none )
+            ( { model | lastActivityTime = Just time }, Cmd.none, Global.None )
 
         CheckIdleTimeout time ->
-            ( debug "login-check" (checkIdleTimeout time model), Cmd.none )
+            ( debug "login-check" (checkIdleTimeout time model), Cmd.none, Global.None )
 
         Snackbar msg_ ->
-            MSnackbar.update msg_ model.snackbar
-                |> map1st (\s -> { model | snackbar = s })
-                |> map2nd (Cmd.map Snackbar)
+            let
+                ( msg, cmd ) =
+                    MSnackbar.update msg_ model.snackbar
+                        |> map1st (\s -> { model | snackbar = s })
+                        |> map2nd (Cmd.map Snackbar)
+            in
+                ( msg, cmd, Global.None )
 
         Mdl msg_ ->
-            Material.update Mdl msg_ model
+            let
+                ( msg, cmd ) =
+                    Material.update Mdl msg_ model
+            in
+                ( msg, cmd, Global.None )
 
 
 
@@ -395,8 +418,8 @@ subscriptions model =
 -- HTTP
 
 
-login : String -> String -> Cmd Msg
-login username password =
+getAuthData : String -> String -> Cmd Msg
+getAuthData username password =
     let
         url =
             "/api/login?username=" ++ username ++ "&password=" ++ password

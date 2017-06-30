@@ -1,4 +1,4 @@
-module Util.Debug exposing (debug)
+module Common.Debug exposing (debug)
 
 import Debug
 

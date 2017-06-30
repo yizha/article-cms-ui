@@ -8,7 +8,7 @@ import Time
 import Global
 import Login
 import Users
-import Util.Debug exposing (debug)
+import Common.Debug exposing (debug)
 
 
 main =
@@ -66,33 +66,19 @@ handleGlobalEvent model e =
         Global.None ->
             ( model, [] )
 
-        Global.Login ->
+        Global.Login token ->
             let
-                ( loginM, loginCmd ) =
-                    Login.login model.login
-
                 ( usersM, usersCmd ) =
-                    Users.login model.users
+                    Users.login token model.users
             in
-                ( { model | login = loginM, users = usersM }
-                , [ Cmd.map Login loginCmd
-                  , Cmd.map Users usersCmd
-                  ]
-                )
+                ( { model | users = usersM }, [ Cmd.map Users usersCmd ] )
 
         Global.Logout ->
             let
                 ( loginM, loginCmd ) =
                     Login.logout model.login
-
-                ( usersM, usersCmd ) =
-                    Users.logout model.users
             in
-                ( { model | login = loginM, users = usersM }
-                , [ Cmd.map Login loginCmd
-                  , Cmd.map Users usersCmd
-                  ]
-                )
+                ( { model | login = loginM }, [ Cmd.map Login loginCmd ] )
 
 
 handleLogin : Login.Msg -> Model -> ( Model, Cmd Msg )
@@ -135,10 +121,12 @@ update msg model =
 
 view : Model -> Html Msg
 view model =
-    if Login.authorized model.login then
-        Html.map Users (Users.view model.users)
-    else
-        Html.map Login (Login.view model.login)
+    case Login.authToken model.login of
+        Just _ ->
+            Html.map Users (Users.view model.users)
+
+        Nothing ->
+            Html.map Login (Login.view model.login)
 
 
 

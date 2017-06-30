@@ -6,8 +6,7 @@ module Login
         , update
         , init
         , subscriptions
-        , authorized
-        , login
+        , authToken
         , logout
         )
 
@@ -24,7 +23,8 @@ import Mouse
 import Keyboard
 import Json.Decode as Json
 import Json.Decode.Extra as JsonExtra
-import Util.Debug exposing (debug)
+import Common.Debug exposing (debug)
+import Common.Util exposing (httpErrorString)
 import Material
 import Material.Button as MButton
 import Material.Textfield as MTextfield
@@ -51,25 +51,6 @@ type AuthError
     = NoSuchUser Http.Error String
     | WrongPassword Http.Error String
     | OtherError Http.Error
-
-
-httpErrorString : Http.Error -> String
-httpErrorString err =
-    case err of
-        Http.BadUrl desc ->
-            "BadUrl: " ++ desc
-
-        Http.Timeout ->
-            "Timeout!"
-
-        Http.NetworkError ->
-            "NetworkError"
-
-        Http.BadStatus resp ->
-            "BadStatus! Code: " ++ (toString resp.status.code) ++ ", Body: " ++ resp.body
-
-        Http.BadPayload desc resp ->
-            "BadPayload: " ++ desc
 
 
 authError : Http.Error -> String -> String -> AuthError
@@ -102,7 +83,8 @@ type State
 
 
 type alias Model =
-    { username : String
+    { loginPath : String
+    , username : String
     , password : String
     , state : State
     , lastActivityTime : Maybe Time.Time
@@ -112,19 +94,14 @@ type alias Model =
     }
 
 
-authorized : Model -> Bool
-authorized model =
+authToken : Model -> Maybe String
+authToken model =
     case model.state of
-        Authorized _ ->
-            True
+        Authorized data ->
+            Just data.token
 
         _ ->
-            False
-
-
-login : Model -> ( Model, Cmd Msg )
-login model =
-    ( model, Cmd.none )
+            Nothing
 
 
 logout : Model -> ( Model, Cmd Msg )
@@ -134,7 +111,8 @@ logout model =
 
 initModel : Model
 initModel =
-    { username = ""
+    { loginPath = "/api/login"
+    , username = ""
     , password = ""
     , state = Unauthorized Nothing
     , lastActivityTime = Nothing
@@ -197,7 +175,7 @@ handleLoginErr err model =
             OtherError err ->
                 let
                     contents =
-                        { message = httpErrorString err
+                        { message = httpErrorString model.loginPath err
                         , action = Nothing
                         , payload = 0
                         , timeout = 5 * Time.second
@@ -230,14 +208,14 @@ update msg model =
 
         LoginRequest ->
             ( debug "login-request" { model | state = InProgress }
-            , getAuthData model.username model.password
+            , getAuthData model.loginPath model.username model.password
             , Global.None
             )
 
         LoginResponse (Ok authdata) ->
             ( debug "login-ok" { model | state = Authorized authdata }
             , Task.perform LogUserActivity Time.now
-            , Global.Login
+            , Global.Login authdata.token
             )
 
         LoginResponse (Err err) ->
@@ -418,11 +396,11 @@ subscriptions model =
 -- HTTP
 
 
-getAuthData : String -> String -> Cmd Msg
-getAuthData username password =
+getAuthData : String -> String -> String -> Cmd Msg
+getAuthData path username password =
     let
         url =
-            "/api/login?username=" ++ username ++ "&password=" ++ password
+            path ++ "?username=" ++ username ++ "&password=" ++ password
     in
         Http.send LoginResponse (Http.get url decodeAuthData)
 

@@ -1,4 +1,4 @@
-module MDC.Textfield exposing (Model, Msg, init, update, view, defaultConfig, InputType(..))
+module MDC.Textfield exposing (Model, Msg, init, update, view, InputType(..), Config(..))
 
 import Html exposing (Html, div, input, label, span, text, p)
 import Html.Attributes exposing (attribute, class, classList, type_, id, value, required)
@@ -12,65 +12,88 @@ type InputType
     | Password
 
 
-type alias Config a =
-    { a
-        | id : String
-        , type_ : InputType
-        , hint : String
-        , help : String
-        , helpPersistent : Bool
-        , helpAsValidationMsg : Bool
-        , required : Bool
-        , validator : Maybe (String -> Bool)
+type Config
+    = ID String
+    | Type InputType
+    | Valid Bool
+    | Required Bool
+    | Hint String
+    | Help String
+    | HelpPersistent Bool
+    | HelpAsValidationMsg Bool
+    | Value String
+
+
+type alias Model msg =
+    { id : String
+    , type_ : InputType
+    , valid : Bool
+    , required : Bool
+    , hint : String
+    , help : String
+    , helpPersistent : Bool
+    , helpAsValidationMsg : Bool
+    , focused : Bool
+    , init : Bool
+    , msgWrapper : Msg -> msg
+    , value : String
     }
 
 
-type alias Model =
-    Config
-        { focused : Bool
-        , valid : Bool
-        , init : Bool
-        , value : String
-        }
+configModel : Config -> Model msg -> Model msg
+configModel conf m =
+    case conf of
+        ID id ->
+            { m | id = id }
+
+        Type t ->
+            { m | type_ = t }
+
+        Valid b ->
+            { m | valid = b }
+
+        Required b ->
+            { m | required = b }
+
+        Hint hint ->
+            { m | hint = hint }
+
+        Help help ->
+            { m | help = help }
+
+        HelpPersistent b ->
+            { m | helpPersistent = b }
+
+        HelpAsValidationMsg b ->
+            { m | helpAsValidationMsg = b }
+
+        Value v ->
+            { m | value = v }
 
 
-defaultConfig : Config {}
-defaultConfig =
-    { id = ""
-    , type_ = Text
-    , hint = ""
-    , help = ""
-    , helpPersistent = False
-    , helpAsValidationMsg = False
-    , required = False
-    , validator = Nothing
-    }
-
-
-init : Config {} -> ( Model, Cmd Msg )
-init conf =
+init : (Msg -> msg) -> List Config -> ( Model msg, Cmd msg )
+init f confs =
     let
-        m =
-            { id = conf.id
-            , type_ = conf.type_
-            , hint =
-                if conf.required && conf.hint == "" then
-                    "REQUIRED"
-                else
-                    conf.hint
-            , help = conf.help
-            , helpPersistent = conf.helpPersistent
-            , helpAsValidationMsg = conf.helpAsValidationMsg
-            , required = conf.required
-            , validator = conf.validator
-            , focused = False
+        defaultModel =
+            { id = ""
+            , type_ = Text
+            , required = False
             , valid = True
+            , hint = ""
+            , help = ""
+            , helpPersistent = False
+            , helpAsValidationMsg = False
+            , focused = False
             , init = True
+            , msgWrapper = f
             , value = ""
             }
+
+        m =
+            List.foldl configModel defaultModel confs
     in
-        if conf.id == "" then
-            ( m, Random.generate SetId Uuid.uuidStringGenerator )
+        if m.id == "" then
+            ( m, Cmd.map f <| Random.generate SetId Uuid.uuidStringGenerator )
         else
             ( m, Cmd.none )
 
@@ -80,65 +103,58 @@ init conf =
 
 
 type Msg
-    = SetId String
+    = UpdateModel (List Config)
+    | SetId String
     | Input String
     | Focus
     | Blur
 
 
-update : Msg -> Model -> ( Model, Cmd Msg )
+update : Msg -> Model msg -> ( Model msg, Cmd msg )
 update msg model =
     case msg of
+        UpdateModel confs ->
+            ( List.foldl configModel model confs, Cmd.none )
+
         SetId id ->
             ( { model | id = id }, Cmd.none )
 
-        Input value ->
-            ( { model | value = value }, Cmd.none )
+        Input v ->
+            ( { model | value = v }, Cmd.none )
 
         Focus ->
             ( { model | focused = True, init = False }, Cmd.none )
 
         Blur ->
-            case model.validator of
-                Nothing ->
-                    ( { model | focused = False, valid = True }, Cmd.none )
-
-                Just f ->
-                    ( { model | focused = False, valid = f model.value }, Cmd.none )
+            ( { model | focused = False }, Cmd.none )
 
 
 
 -- VIEW
 
 
-invalid : Model -> Bool
-invalid model =
-    (not model.init)
-        && ((model.required && model.value == "") || not model.valid)
-
-
-helpAttrs : Model -> Bool -> Bool -> List (Html.Attribute Msg)
-helpAttrs model persistent validation =
+helpAttrs : Model msg -> List (Html.Attribute msg)
+helpAttrs model =
     let
         classes =
             classList
                 [ ( "mdc-textfield-helptext", True )
-                , ( "mdc-textfield-helptext--persistent", persistent )
-                , ( "mdc-textfield-helptext--validation-msg", validation )
+                , ( "mdc-textfield-helptext--persistent", model.helpPersistent )
+                , ( "mdc-textfield-helptext--validation-msg", model.helpAsValidationMsg )
                 ]
     in
-        if (invalid model) && validation then
+        if model.helpAsValidationMsg && not model.valid then
             [ classes, attribute "role" "alert" ]
         else
             [ classes ]
 
 
-helptext : Model -> Maybe (Html Msg)
+helptext : Model msg -> Maybe (Html msg)
 helptext model =
     if model.help == "" then
         Nothing
     else
-        Just (p (helpAttrs model model.helpPersistent model.helpAsValidationMsg) [ text model.help ])
+        Just (p (helpAttrs model) [ text model.help ])
 
 
 inputType : InputType -> String
@@ -151,22 +167,21 @@ inputType t =
             "password"
 
 
-nativeInput : Model -> Html Msg
+nativeInput : Model msg -> Html msg
 nativeInput model =
     input
         [ type_ (inputType model.type_)
         , id model.id
         , class "mdc-textfield__input"
-        , value model.value
         , required model.required
-        , onFocus Focus
-        , onInput Input
-        , onBlur Blur
+        , onFocus (model.msgWrapper Focus)
+        , onInput (model.msgWrapper << Input)
+        , onBlur (model.msgWrapper Blur)
         ]
         []
 
 
-hintLabel : Model -> Html Msg
+hintLabel : Model msg -> Html msg
 hintLabel model =
     label
         [ classList
@@ -178,20 +193,20 @@ hintLabel model =
         [ text model.hint ]
 
 
-textfield : Model -> Html Msg
+textfield : Model msg -> Html msg
 textfield model =
     div
         [ classList
             [ ( "mdc-textfield", True )
             , ( "mdc-textfield--upgraded", model.hint /= "" )
             , ( "mdc-textfield--focused", model.focused )
-            , ( "mdc-textfield--invalid", (not model.focused) && (invalid model) )
+            , ( "mdc-textfield--invalid", (not model.init) && (not model.valid) )
             ]
         ]
         [ nativeInput model, hintLabel model ]
 
 
-view : Model -> Html Msg
+view : Model msg -> Html msg
 view model =
     case helptext model of
         Nothing ->

@@ -1,10 +1,11 @@
-module MDC.Textfield exposing (Model, Msg, init, update, view, InputType(..), Config(..))
+module MDC.Textfield exposing (Model, Msg, init, update, updateModel, view, InputType(..), Config(..))
 
 import Html exposing (Html, div, input, label, span, text, p)
 import Html.Attributes exposing (attribute, class, classList, type_, id, value, required)
-import Html.Events exposing (onFocus, onBlur, onInput)
+import Html.Events
 import Uuid.Barebones as Uuid
 import Random.Pcg as Random
+import Json.Decode as Json
 
 
 type InputType
@@ -12,7 +13,7 @@ type InputType
     | Password
 
 
-type Config
+type Config msg
     = ID String
     | Type InputType
     | Valid Bool
@@ -22,6 +23,8 @@ type Config
     | HelpPersistent Bool
     | HelpAsValidationMsg Bool
     | Value String
+    | OnInput (Maybe (String -> msg))
+    | OnEnter (Maybe msg)
 
 
 type alias Model msg =
@@ -35,43 +38,51 @@ type alias Model msg =
     , helpAsValidationMsg : Bool
     , focused : Bool
     , init : Bool
-    , msgWrapper : Msg -> msg
+    , msgWrapper : Msg msg -> msg
     , value : String
+    , onInput : Maybe (String -> msg)
+    , onEnter : Maybe msg
     }
 
 
-configModel : Config -> Model msg -> Model msg
+configModel : Config msg -> Model msg -> Model msg
 configModel conf m =
     case conf of
-        ID id ->
-            { m | id = id }
+        ID v ->
+            { m | id = v }
 
-        Type t ->
-            { m | type_ = t }
+        Type v ->
+            { m | type_ = v }
 
-        Valid b ->
-            { m | valid = b }
+        Valid v ->
+            { m | valid = v }
 
-        Required b ->
-            { m | required = b }
+        Required v ->
+            { m | required = v }
 
-        Hint hint ->
-            { m | hint = hint }
+        Hint v ->
+            { m | hint = v }
 
-        Help help ->
-            { m | help = help }
+        Help v ->
+            { m | help = v }
 
-        HelpPersistent b ->
-            { m | helpPersistent = b }
+        HelpPersistent v ->
+            { m | helpPersistent = v }
 
-        HelpAsValidationMsg b ->
-            { m | helpAsValidationMsg = b }
+        HelpAsValidationMsg v ->
+            { m | helpAsValidationMsg = v }
 
         Value v ->
             { m | value = v }
 
+        OnInput v ->
+            { m | onInput = v }
 
-init : (Msg -> msg) -> List Config -> ( Model msg, Cmd msg )
+        OnEnter v ->
+            { m | onEnter = v }
+
+
+init : (Msg msg -> msg) -> List (Config msg) -> ( Model msg, Cmd msg )
 init f confs =
     let
         defaultModel =
@@ -87,6 +98,8 @@ init f confs =
             , init = True
             , msgWrapper = f
             , value = ""
+            , onInput = Nothing
+            , onEnter = Nothing
             }
 
         m =
@@ -102,19 +115,24 @@ init f confs =
 -- UPDATE
 
 
-type Msg
-    = UpdateModel (List Config)
+type Msg msg
+    = Noop
     | SetId String
     | Input String
     | Focus
     | Blur
 
 
-update : Msg -> Model msg -> ( Model msg, Cmd msg )
+updateModel : Model msg -> List (Config msg) -> Model msg
+updateModel model confs =
+    List.foldl configModel model confs
+
+
+update : Msg msg -> Model msg -> ( Model msg, Cmd msg )
 update msg model =
     case msg of
-        UpdateModel confs ->
-            ( List.foldl configModel model confs, Cmd.none )
+        Noop ->
+            ( model, Cmd.none )
 
         SetId id ->
             ( { model | id = id }, Cmd.none )
@@ -167,18 +185,50 @@ inputType t =
             "password"
 
 
+onEnter : Model msg -> msg -> Html.Attribute msg
+onEnter model msg =
+    Html.Events.on
+        "keyup"
+        (Json.map
+            (\code ->
+                if code == 13 then
+                    msg
+                else
+                    model.msgWrapper Noop
+            )
+            Html.Events.keyCode
+        )
+
+
 nativeInput : Model msg -> Html msg
 nativeInput model =
-    input
-        [ type_ (inputType model.type_)
-        , id model.id
-        , class "mdc-textfield__input"
-        , required model.required
-        , onFocus (model.msgWrapper Focus)
-        , onInput (model.msgWrapper << Input)
-        , onBlur (model.msgWrapper Blur)
-        ]
-        []
+    let
+        attrs =
+            [ type_ (inputType model.type_)
+            , id model.id
+            , class "mdc-textfield__input"
+            , required model.required
+            , Html.Events.onFocus (model.msgWrapper Focus)
+            , Html.Events.onBlur (model.msgWrapper Blur)
+            , Html.Events.onInput
+                (case model.onInput of
+                    Nothing ->
+                        (model.msgWrapper << Input)
+
+                    Just f ->
+                        f
+                )
+            ]
+
+        attrs1 =
+            case model.onEnter of
+                Nothing ->
+                    attrs
+
+                Just f ->
+                    (onEnter model f) :: attrs
+    in
+        input attrs1 []
 
 
 hintLabel : Model msg -> Html msg

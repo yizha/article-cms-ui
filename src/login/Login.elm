@@ -107,14 +107,19 @@ init =
                 [ Textfield.ID "login_username"
                 , Textfield.Hint "Username"
                 , Textfield.HelpAsValidationMsg True
+                , Textfield.OnInput (Just UsernameInput)
+                , Textfield.OnEnter (Just LoginRequest)
                 ]
 
         ( passwordModel, passwordCmd ) =
             Textfield.init
                 Password
-                [ Textfield.ID "login_password"
+                [ Textfield.Type Textfield.Password
+                , Textfield.ID "login_password"
                 , Textfield.Hint "Password"
                 , Textfield.HelpAsValidationMsg True
+                , Textfield.OnInput (Just PasswordInput)
+                , Textfield.OnEnter (Just LoginRequest)
                 ]
 
         m =
@@ -141,8 +146,10 @@ init =
 
 type Msg
     = Ignore
-    | Username Textfield.Msg
-    | Password Textfield.Msg
+    | Username (Textfield.Msg Msg)
+    | Password (Textfield.Msg Msg)
+    | UsernameInput String
+    | PasswordInput String
     | LoginRequest
     | LoginResponse (Result Http.Error AuthData)
     | UserActivity
@@ -174,18 +181,96 @@ handleLoginErr err model =
         authErr =
             authError err model.username.value model.password.value
 
-        newModel =
+        m1 =
             { model | state = Unauthorized (Just authErr) }
+
+        um =
+            Textfield.updateModel
+                model.username
+                [ Textfield.Help ""
+                , Textfield.Valid True
+                ]
+
+        pm =
+            Textfield.updateModel
+                model.password
+                [ Textfield.Help ""
+                , Textfield.Valid True
+                ]
+
+        m2 =
+            { m1 | username = um, password = pm }
     in
         case authErr of
             OtherError err ->
-                ( newModel, Cmd.none, Global.None )
+                ( m2, Cmd.none, Global.None )
 
             NoSuchUser _ _ ->
-                ( newModel, Task.attempt ignore (Dom.focus "login_username"), Global.None )
+                let
+                    um =
+                        Textfield.updateModel
+                            model.username
+                            [ Textfield.Help "No such user!"
+                            , Textfield.Valid False
+                            ]
+                in
+                    ( { m2 | username = um }
+                    , Task.attempt ignore (Dom.focus "login_username")
+                    , Global.None
+                    )
 
             WrongPassword _ _ ->
-                ( newModel, Task.attempt ignore (Dom.focus "login_password"), Global.None )
+                let
+                    pm =
+                        Textfield.updateModel
+                            model.password
+                            [ Textfield.Help "Wrong password!"
+                            , Textfield.Valid False
+                            ]
+                in
+                    ( { m2 | password = pm }, Task.attempt ignore (Dom.focus "login_password"), Global.None )
+
+
+handleUsernameInput : Model -> String -> Textfield.Model Msg
+handleUsernameInput model username =
+    case model.state of
+        Unauthorized (Just (NoSuchUser _ wrongUsername)) ->
+            if username == wrongUsername then
+                Textfield.updateModel
+                    (Textfield.updateModel model.username [ Textfield.Value username ])
+                    [ Textfield.Valid False
+                    , Textfield.Help "No such user!"
+                    ]
+            else
+                Textfield.updateModel
+                    (Textfield.updateModel model.username [ Textfield.Value username ])
+                    [ Textfield.Valid True
+                    , Textfield.Help ""
+                    ]
+
+        _ ->
+            Textfield.updateModel model.username [ Textfield.Value username ]
+
+
+handlePasswordInput : Model -> String -> Textfield.Model Msg
+handlePasswordInput model password =
+    case model.state of
+        Unauthorized (Just (WrongPassword _ wrongPassword)) ->
+            if password == wrongPassword then
+                Textfield.updateModel
+                    (Textfield.updateModel model.password [ Textfield.Value password ])
+                    [ Textfield.Valid False
+                    , Textfield.Help "Wrong password!"
+                    ]
+            else
+                Textfield.updateModel
+                    (Textfield.updateModel model.password [ Textfield.Value password ])
+                    [ Textfield.Valid True
+                    , Textfield.Help ""
+                    ]
+
+        _ ->
+            (Textfield.updateModel model.password [ Textfield.Value password ])
 
 
 update : Msg -> Model -> ( Model, Cmd Msg, Global.Event )
@@ -207,6 +292,20 @@ update msg model =
                     Textfield.update tfm model.password
             in
                 ( { model | password = m }, c, Global.None )
+
+        UsernameInput v ->
+            let
+                um =
+                    handleUsernameInput model v
+            in
+                ( { model | username = um }, Cmd.none, Global.None )
+
+        PasswordInput v ->
+            let
+                pm =
+                    handlePasswordInput model v
+            in
+                ( { model | password = pm }, Cmd.none, Global.None )
 
         LoginRequest ->
             if model.username.value /= "" && model.password.value /= "" then

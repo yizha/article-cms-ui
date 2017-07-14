@@ -1,7 +1,7 @@
 module MDC.Textfield exposing (Model, Msg, init, update, updateModel, view, InputType(..), Config(..))
 
 import Html exposing (Html, div, input, label, span, text, p)
-import Html.Attributes exposing (attribute, class, classList, type_, id, value, required)
+import Html.Attributes exposing (attribute, class, classList, type_, id, value, required, disabled)
 import Html.Events
 import Uuid.Barebones as Uuid
 import Random.Pcg as Random
@@ -18,6 +18,7 @@ type Config msg
     | Type InputType
     | Valid Bool
     | Required Bool
+    | Disabled Bool
     | Hint String
     | Help String
     | HelpPersistent Bool
@@ -32,6 +33,7 @@ type alias Model msg =
     , type_ : InputType
     , valid : Bool
     , required : Bool
+    , disabled : Bool
     , hint : String
     , help : String
     , helpPersistent : Bool
@@ -59,6 +61,9 @@ configModel conf m =
 
         Required v ->
             { m | required = v }
+
+        Disabled v ->
+            { m | disabled = v }
 
         Hint v ->
             { m | hint = v }
@@ -89,6 +94,7 @@ init f confs =
             { id = ""
             , type_ = Text
             , required = False
+            , disabled = False
             , valid = True
             , hint = ""
             , help = ""
@@ -167,12 +173,9 @@ helpAttrs model =
             [ classes ]
 
 
-helptext : Model msg -> Maybe (Html msg)
+helptext : Model msg -> Html msg
 helptext model =
-    if model.help == "" then
-        Nothing
-    else
-        Just (p (helpAttrs model) [ text model.help ])
+    p (helpAttrs model) [ text model.help ]
 
 
 inputType : InputType -> String
@@ -238,6 +241,7 @@ hintLabel model =
             [ ( "mdc-textfield__label", True )
             , ( "mdc-textfield__label--float-above", model.focused || model.value /= "" )
             ]
+        , disabled model.disabled
         , attribute "for" model.id
         ]
         [ text model.hint ]
@@ -251,6 +255,7 @@ textfield model =
             , ( "mdc-textfield--upgraded", model.hint /= "" )
             , ( "mdc-textfield--focused", model.focused )
             , ( "mdc-textfield--invalid", (not model.init) && (not model.valid) )
+            , ( "mdc-textfield--disabled", model.disabled )
             ]
         ]
         [ nativeInput model, hintLabel model ]
@@ -258,9 +263,4 @@ textfield model =
 
 view : Model msg -> Html msg
 view model =
-    case helptext model of
-        Nothing ->
-            div [] [ textfield model ]
-
-        Just elem ->
-            div [] [ textfield model, elem ]
+    div [] [ textfield model, helptext model ]

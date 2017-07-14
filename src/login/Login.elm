@@ -12,7 +12,7 @@ module Login
 
 import Global
 import Html exposing (..)
-import Html.Attributes exposing (href, class, style)
+import Html.Attributes exposing (href, class, style, disabled)
 import Html.Events
 import Dom
 import Date
@@ -237,14 +237,16 @@ handleUsernameInput model username =
         Unauthorized (Just (NoSuchUser _ wrongUsername)) ->
             if username == wrongUsername then
                 Textfield.updateModel
-                    (Textfield.updateModel model.username [ Textfield.Value username ])
-                    [ Textfield.Valid False
+                    model.username
+                    [ Textfield.Value username
+                    , Textfield.Valid False
                     , Textfield.Help "No such user!"
                     ]
             else
                 Textfield.updateModel
-                    (Textfield.updateModel model.username [ Textfield.Value username ])
-                    [ Textfield.Valid True
+                    model.username
+                    [ Textfield.Value username
+                    , Textfield.Valid True
                     , Textfield.Help ""
                     ]
 
@@ -258,14 +260,16 @@ handlePasswordInput model password =
         Unauthorized (Just (WrongPassword _ wrongPassword)) ->
             if password == wrongPassword then
                 Textfield.updateModel
-                    (Textfield.updateModel model.password [ Textfield.Value password ])
-                    [ Textfield.Valid False
+                    model.password
+                    [ Textfield.Value password
+                    , Textfield.Valid False
                     , Textfield.Help "Wrong password!"
                     ]
             else
                 Textfield.updateModel
-                    (Textfield.updateModel model.password [ Textfield.Value password ])
-                    [ Textfield.Valid True
+                    model.password
+                    [ Textfield.Value password
+                    , Textfield.Valid True
                     , Textfield.Help ""
                     ]
 
@@ -348,11 +352,6 @@ disableLoginBtn model =
     model.username.value == "" || model.password.value == "" || model.state == InProgress
 
 
-disableLoginInput : Model -> Bool
-disableLoginInput model =
-    model.state == InProgress
-
-
 noSuchUserErr : Model -> String
 noSuchUserErr model =
     case model.state of
@@ -393,6 +392,18 @@ view model =
                     )
                     Html.Events.keyCode
                 )
+
+        um =
+            (Textfield.updateModel
+                model.username
+                [ Textfield.Disabled (model.state == InProgress) ]
+            )
+
+        pm =
+            (Textfield.updateModel
+                model.password
+                [ Textfield.Disabled (model.state == InProgress) ]
+            )
     in
         div
             [ style
@@ -402,8 +413,19 @@ view model =
                 , ( "justify-content", "center" )
                 ]
             ]
-            [ Textfield.view model.username
-            , Textfield.view model.password
+            [ ul [ class "mdc-list" ]
+                [ li [ class "mdc-list-item" ] [ Textfield.view um ]
+                , li [ class "mdc-list-item" ] []
+                , li [ class "mdc-list-item" ] [ Textfield.view pm ]
+                , li [ class "mdc-list-item" ] []
+                , li [ class "mdc-list-item" ]
+                    [ button
+                        [ class "mdc-button mdc-button--raised"
+                        , disabled (disableLoginBtn model)
+                        ]
+                        [ text "Login" ]
+                    ]
+                ]
             ]
 
 

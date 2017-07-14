@@ -13,7 +13,7 @@ module Login
 import Global
 import Html exposing (..)
 import Html.Attributes exposing (href, class, style, disabled)
-import Html.Events
+import Html.Events exposing (onClick)
 import Dom
 import Date
 import Time
@@ -422,6 +422,7 @@ view model =
                     [ button
                         [ class "mdc-button mdc-button--raised"
                         , disabled (disableLoginBtn model)
+                        , onClick LoginRequest
                         ]
                         [ text "Login" ]
                     ]

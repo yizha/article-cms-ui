@@ -378,6 +378,16 @@ wrongPasswordErr model =
             ""
 
 
+otherErr : Model -> String
+otherErr model =
+    case model.state of
+        Unauthorized (Just (OtherError err)) ->
+            httpErrorString model.loginPath err
+
+        _ ->
+            ""
+
+
 view : Model -> Html Msg
 view model =
     let
@@ -405,27 +415,35 @@ view model =
                 [ Textfield.Disabled (model.state == InProgress) ]
             )
     in
-        div
-            [ style
-                [ ( "padding", "8rem 2rem 2rem 2rem" )
-                , ( "display", "flex" )
-                , ( "align-items", "center" )
-                , ( "justify-content", "center" )
-                ]
-            ]
-            [ ul [ class "mdc-list" ]
-                [ li [ class "mdc-list-item" ] [ Textfield.view um ]
-                , li [ class "mdc-list-item" ] []
-                , li [ class "mdc-list-item" ] [ Textfield.view pm ]
-                , li [ class "mdc-list-item" ] []
-                , li [ class "mdc-list-item" ]
-                    [ button
-                        [ class "mdc-button mdc-button--raised"
-                        , disabled (disableLoginBtn model)
-                        , onClick LoginRequest
+        ul [ style [ ( "list-style-type", "none" ) ] ]
+            [ li []
+                [ div
+                    [ style
+                        [ ( "padding", "8rem 2rem 2rem 2rem" )
+                        , ( "display", "flex" )
+                        , ( "align-items", "center" )
+                        , ( "justify-content", "center" )
                         ]
-                        [ text "Login" ]
                     ]
+                    [ ul [ class "mdc-list" ]
+                        [ li [ class "mdc-list-item" ] [ Textfield.view um ]
+                        , li [ class "mdc-list-item" ] []
+                        , li [ class "mdc-list-item" ] [ Textfield.view pm ]
+                        , li [ class "mdc-list-item" ] []
+                        , li [ class "mdc-list-item" ]
+                            [ button
+                                [ class "mdc-button mdc-button--raised"
+                                , disabled (disableLoginBtn model)
+                                , onClick LoginRequest
+                                ]
+                                [ text "Login" ]
+                            ]
+                        ]
+                    ]
+                ]
+            , li []
+                [ p [ style [ ( "color", "red" ) ] ]
+                    [ text (otherErr model) ]
                 ]
             ]
 

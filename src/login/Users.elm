@@ -10,8 +10,8 @@ module Users
         )
 
 import Global
-import Html exposing (Html, div, text, button)
-import Html.Attributes exposing (href, class, style)
+import Html exposing (..)
+import Html.Attributes exposing (href, class, style, disabled)
 import Html.Events exposing (onClick)
 import Dom
 import Date
@@ -24,15 +24,6 @@ import Json.Decode as Json
 import Json.Decode.Extra as JsonExtra
 import Common.Debug exposing (debug)
 import Common.Util exposing (httpErrorString)
-import Material
-import Material.Color as MColor
-import Material.Layout as MLayout
-import Material.Button as MButton
-import Material.Table as MTable
-import Material.Snackbar as MSnackbar
-import Material.Options as MOptions exposing (css)
-import Material.Chip as MChip
-import Material.Helpers exposing (map1st, map2nd)
 
 
 -- MODEL
@@ -47,23 +38,30 @@ type alias CmsRole =
 type alias CmsUser =
     { username : String
     , password : String
-    , role : List String
+    , roles : List String
     }
+
+
+type State
+    = Loading
+    | RolesLoaded (Result Http.Error (List CmsRole))
+    | UsersLoaded (Result Http.Error (List CmsUser))
+    | AllLoaded ( Result Http.Error (List CmsRole), Result Http.Error (List CmsUser) )
 
 
 type alias Model =
-    { rolesPath : String
-    , roles : List CmsRole
+    { loginUsername : String
+    , loginToken : String
+    , rolesPath : String
     , usersPath : String
-    , users : List CmsUser
-    , snackbar : MSnackbar.Model Int
-    , mdl : Material.Model
+    , state : State
+    , editUser : Maybe CmsUser
     }
 
 
-login : String -> Model -> ( Model, Cmd Msg )
-login token model =
-    ( initModel
+login : String -> String -> Model -> ( Model, Cmd Msg )
+login username token model =
+    ( initModel username token
     , Cmd.batch
         [ getRoles model.rolesPath token
         , getUsers model.usersPath token
@@ -71,20 +69,20 @@ login token model =
     )
 
 
-initModel : Model
-initModel =
-    { rolesPath = "/api/login/roles"
-    , roles = []
+initModel : String -> String -> Model
+initModel username token =
+    { loginUsername = username
+    , loginToken = token
+    , rolesPath = "/api/login/roles"
     , usersPath = "/api/login/users"
-    , users = []
-    , snackbar = MSnackbar.model
-    , mdl = Material.model
+    , state = Loading
+    , editUser = Nothing
     }
 
 
 init : ( Model, Cmd Msg )
 init =
-    ( initModel, Cmd.none )
+    ( initModel "" "", Cmd.none )
 
 
 
@@ -95,130 +93,210 @@ type Msg
     = Logout
     | Roles (Result Http.Error (List CmsRole))
     | Users (Result Http.Error (List CmsUser))
-    | Snackbar (MSnackbar.Msg Int)
-    | Mdl (Material.Msg Msg)
+    | Reload
+    | EditUser CmsUser
 
 
-handleHttpErr : String -> Http.Error -> Model -> ( Model, Cmd Msg, Global.Event )
-handleHttpErr path err model =
-    let
-        contents =
-            { message = httpErrorString path err
-            , action = Nothing
-            , payload = 0
-            , timeout = 5 * Time.second
-            , fade = 250 * Time.millisecond
-            }
 
-        ( sbModel, sbCmd ) =
-            MSnackbar.add contents model.snackbar
-    in
-        ( { model | snackbar = sbModel }, Cmd.map Snackbar sbCmd, Global.None )
+{-
+   handleHttpErr : String -> Http.Error -> Model -> ( Model, Cmd Msg, Global.Event )
+   handleHttpErr path err model =
+       ( { model | error = httpErrorString path err }, Cmd.none, Global.None )
+-}
+
+
+updateRoles : Result Http.Error (List CmsRole) -> Model -> Model
+updateRoles roles model =
+    case model.state of
+        Loading ->
+            { model | state = RolesLoaded roles }
+
+        RolesLoaded _ ->
+            { model | state = RolesLoaded roles }
+
+        UsersLoaded users ->
+            { model | state = AllLoaded ( roles, users ) }
+
+        AllLoaded ( _, users ) ->
+            { model | state = AllLoaded ( roles, users ) }
+
+
+updateUsers : Result Http.Error (List CmsUser) -> Model -> Model
+updateUsers users model =
+    case model.state of
+        Loading ->
+            { model | state = UsersLoaded users }
+
+        RolesLoaded roles ->
+            { model | state = AllLoaded ( roles, users ) }
+
+        UsersLoaded _ ->
+            { model | state = UsersLoaded users }
+
+        AllLoaded ( roles, _ ) ->
+            { model | state = AllLoaded ( roles, users ) }
 
 
 update : Msg -> Model -> ( Model, Cmd Msg, Global.Event )
 update msg model =
     case msg of
         Logout ->
-            ( initModel, Cmd.none, Global.Logout )
+            ( initModel "" "", Cmd.none, Global.Logout )
 
-        Roles (Ok roles) ->
-            ( { model | roles = roles }, Cmd.none, Global.None )
+        Roles roles ->
+            ( updateRoles roles model, Cmd.none, Global.None )
 
-        Roles (Err err) ->
-            handleHttpErr model.rolesPath err model
+        Users users ->
+            ( updateUsers users model, Cmd.none, Global.None )
 
-        Users (Ok users) ->
-            ( { model | users = users }, Cmd.none, Global.None )
+        Reload ->
+            ( { model | state = Loading }
+            , Cmd.batch
+                [ getRoles model.rolesPath model.loginToken
+                , getUsers model.usersPath model.loginToken
+                ]
+            , Global.None
+            )
 
-        Users (Err err) ->
-            handleHttpErr model.usersPath err model
-
-        Snackbar msg_ ->
-            let
-                ( msg, cmd ) =
-                    MSnackbar.update msg_ model.snackbar
-                        |> map1st (\s -> { model | snackbar = s })
-                        |> map2nd (Cmd.map Snackbar)
-            in
-                ( msg, cmd, Global.None )
-
-        Mdl msg_ ->
-            let
-                ( msg, cmd ) =
-                    Material.update Mdl msg_ model
-            in
-                ( msg, cmd, Global.None )
+        EditUser user ->
+            ( { model | editUser = Just user }, Cmd.none, Global.None )
 
 
 
 -- VIEW
 
 
-userRole : String -> Html Msg
-userRole role =
-    MChip.span [] [ MChip.content [] [ text role ] ]
+disableNew : Model -> Bool
+disableNew model =
+    case model.state of
+        AllLoaded ( Ok _, Ok _ ) ->
+            False
+
+        _ ->
+            True
 
 
-usersTable : List CmsUser -> Html Msg
-usersTable users =
-    MTable.table []
-        [ MTable.thead []
-            [ MTable.tr []
-                [ MTable.th [] [ text "Username" ]
-                , MTable.th [] [ text "Role" ]
-                , MTable.th [] []
+disableReload : Model -> Bool
+disableReload model =
+    case model.state of
+        AllLoaded _ ->
+            False
+
+        _ ->
+            True
+
+
+disableEdit : Model -> Bool
+disableEdit =
+    disableNew
+
+
+toolbar : Model -> Html Msg
+toolbar model =
+    header [ class "mdc-toolbar mdc-toolbar--fixed" ]
+        [ div
+            [ class "mdc-toolbar__row" ]
+            [ section [ class "mdc-toolbar__section mdc-toolbar__section--align-start mdc-toolbar__section--shrink-to-fit" ]
+                [ span [ class "mdc-toolbar__title" ]
+                    [ text "User Management" ]
+                ]
+            , section [ class "mdc-toolbar__section" ]
+                [ span [ style [ ( "color", "red" ) ] ] [ text "" ] ]
+            , section [ class "mdc-toolbar__section mdc-toolbar__section--align-end mdc-toolbar__section--shrink-to-fit" ]
+                [ button
+                    [ class "mdc-button mdc-theme--text-primary-on-dark"
+                    , onClick Logout
+                    ]
+                    [ text "Logout" ]
                 ]
             ]
-        , MTable.tbody []
-            (users
-                |> List.map
-                    (\u ->
-                        MTable.tr []
-                            [ MTable.td [] [ text u.username ]
-                            , MTable.td [] (List.map userRole u.role)
-                            , MTable.td [] []
-                            ]
-                    )
-            )
         ]
+
+
+userRoleSpan : String -> Html Msg
+userRoleSpan role =
+    span [] [ text role ]
+
+
+userNameSpan : String -> String -> Html Msg
+userNameSpan loginUsername username =
+    if username == loginUsername then
+        span []
+            [ span [] [ text username ]
+            , span [] [ text " " ]
+            , span [ style [ ( "color", "blue" ) ] ] [ text "(You)" ]
+            ]
+    else
+        span [] [ text username ]
+
+
+userRow : Model -> CmsUser -> Html Msg
+userRow model user =
+    tr []
+        [ td [] [ userNameSpan model.loginUsername user.username ]
+        , td [] (List.map userRoleSpan user.roles)
+        , td []
+            [ button
+                [ class "mdc-button mdc-button--dense mdc-button--compact mdc-button--primary"
+                , disabled (disableEdit model)
+                , onClick (EditUser user)
+                ]
+                [ text "Edit" ]
+            ]
+        ]
+
+
+userTable : Model -> Html Msg
+userTable model =
+    let
+        users =
+            getUsersFromModel model
+    in
+        table []
+            [ thead []
+                [ tr []
+                    [ td [] [ text "Username" ]
+                    , td [] [ text "Roles" ]
+                    , td []
+                        [ button
+                            [ class "mdc-button mdc-button--dense mdc-button--compact mdc-button--primary"
+                            , disabled (disableNew model)
+                            ]
+                            [ text "New" ]
+                        , button
+                            [ class "mdc-button mdc-button--dense mdc-button--compact mdc-button--primary"
+                            , disabled (disableReload model)
+                            , onClick Reload
+                            ]
+                            [ text "Reload" ]
+                        ]
+                    ]
+                ]
+            , tbody [] (List.map (userRow model) users)
+            ]
+
+
+getUsersFromModel : Model -> List CmsUser
+getUsersFromModel model =
+    case model.state of
+        AllLoaded ( _, Ok users ) ->
+            users
+
+        _ ->
+            []
 
 
 view : Model -> Html Msg
 view model =
     div
         []
-        [ MSnackbar.view model.snackbar |> Html.map Snackbar
-        , MLayout.render Mdl
-            model.mdl
-            [ MLayout.fixedHeader ]
-            { header =
-                [ MLayout.row
-                    []
-                    [ MLayout.title [] [ text "Users" ]
-                    , MLayout.spacer
-                    , MLayout.navigation []
-                        [ MButton.render Mdl
-                            [ 0 ]
-                            model.mdl
-                            [ MColor.text MColor.white
-                            , MOptions.onClick Logout
-                            ]
-                            [ text "Create User" ]
-                        , MButton.render Mdl
-                            [ 1 ]
-                            model.mdl
-                            [ MColor.text MColor.white
-                            , MOptions.onClick Logout
-                            ]
-                            [ text "Logout" ]
-                        ]
-                    ]
-                ]
-            , drawer = []
-            , tabs = ( [], [] )
-            , main = [ usersTable model.users ]
-            }
+        [ toolbar model
+        , div
+            [ class "mdc-toolbar-fixed-adjust"
+            , style [ ( "padding", "1rem" ) ]
+            ]
+            [ userTable model
+            ]
         ]
 
 

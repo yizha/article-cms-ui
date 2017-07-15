@@ -3,5 +3,5 @@ module Global exposing (Event(..))
 
 type Event
     = None
-    | Login String
+    | Login String String
     | Logout

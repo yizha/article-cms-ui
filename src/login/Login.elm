@@ -123,7 +123,7 @@ init =
                 ]
 
         m =
-            { loginPath = "/api/login"
+            { loginPath = "/api/manage/login"
             , username = usernameModel
             , password = passwordModel
             , state = Unauthorized Nothing
@@ -323,7 +323,7 @@ update msg model =
         LoginResponse (Ok authdata) ->
             ( debug "login-ok" { model | state = Authorized authdata }
             , Task.perform LogUserActivity Time.now
-            , Global.Login authdata.token
+            , Global.Login model.username.value authdata.token
             )
 
         LoginResponse (Err err) ->

@@ -66,10 +66,10 @@ handleGlobalEvent model e =
         Global.None ->
             ( model, [] )
 
-        Global.Login token ->
+        Global.Login username token ->
             let
                 ( usersM, usersCmd ) =
-                    Users.login token model.users
+                    Users.login username token model.users
             in
                 ( { model | users = usersM }, [ Cmd.map Users usersCmd ] )
 

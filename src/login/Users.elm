@@ -42,7 +42,7 @@ type alias CmsUser =
     }
 
 
-type State
+type DataState
     = Loading
     | RolesLoaded (Result Http.Error (List CmsRole))
     | UsersLoaded (Result Http.Error (List CmsUser))
@@ -54,7 +54,7 @@ type alias Model =
     , loginToken : String
     , rolesPath : String
     , usersPath : String
-    , state : State
+    , dataState : DataState
     , editUser : Maybe CmsUser
     }
 
@@ -75,7 +75,7 @@ initModel username token =
     , loginToken = token
     , rolesPath = "/api/login/roles"
     , usersPath = "/api/login/users"
-    , state = Loading
+    , dataState = Loading
     , editUser = Nothing
     }
 
@@ -107,34 +107,34 @@ type Msg
 
 updateRoles : Result Http.Error (List CmsRole) -> Model -> Model
 updateRoles roles model =
-    case model.state of
+    case model.dataState of
         Loading ->
-            { model | state = RolesLoaded roles }
+            { model | dataState = RolesLoaded roles }
 
         RolesLoaded _ ->
-            { model | state = RolesLoaded roles }
+            { model | dataState = RolesLoaded roles }
 
         UsersLoaded users ->
-            { model | state = AllLoaded ( roles, users ) }
+            { model | dataState = AllLoaded ( roles, users ) }
 
         AllLoaded ( _, users ) ->
-            { model | state = AllLoaded ( roles, users ) }
+            { model | dataState = AllLoaded ( roles, users ) }
 
 
 updateUsers : Result Http.Error (List CmsUser) -> Model -> Model
 updateUsers users model =
-    case model.state of
+    case model.dataState of
         Loading ->
-            { model | state = UsersLoaded users }
+            { model | dataState = UsersLoaded users }
 
         RolesLoaded roles ->
-            { model | state = AllLoaded ( roles, users ) }
+            { model | dataState = AllLoaded ( roles, users ) }
 
         UsersLoaded _ ->
-            { model | state = UsersLoaded users }
+            { model | dataState = UsersLoaded users }
 
         AllLoaded ( roles, _ ) ->
-            { model | state = AllLoaded ( roles, users ) }
+            { model | dataState = AllLoaded ( roles, users ) }
 
 
 update : Msg -> Model -> ( Model, Cmd Msg, Global.Event )
@@ -150,7 +150,7 @@ update msg model =
             ( updateUsers users model, Cmd.none, Global.None )
 
         Reload ->
-            ( { model | state = Loading }
+            ( { model | dataState = Loading }
             , Cmd.batch
                 [ getRoles model.rolesPath model.loginToken
                 , getUsers model.usersPath model.loginToken
@@ -168,7 +168,7 @@ update msg model =
 
 disableNew : Model -> Bool
 disableNew model =
-    case model.state of
+    case model.dataState of
         AllLoaded ( Ok _, Ok _ ) ->
             False
 
@@ -178,7 +178,7 @@ disableNew model =
 
 disableReload : Model -> Bool
 disableReload model =
-    case model.state of
+    case model.dataState of
         AllLoaded _ ->
             False
 
@@ -189,6 +189,11 @@ disableReload model =
 disableEdit : Model -> Bool
 disableEdit =
     disableNew
+
+
+disableLogout : Model -> Bool
+disableLogout =
+    disableReload
 
 
 toolbar : Model -> Html Msg
@@ -205,6 +210,7 @@ toolbar model =
             , section [ class "mdc-toolbar__section mdc-toolbar__section--align-end mdc-toolbar__section--shrink-to-fit" ]
                 [ button
                     [ class "mdc-button mdc-theme--text-primary-on-dark"
+                    , disabled (disableLogout model)
                     , onClick Logout
                     ]
                     [ text "Logout" ]
@@ -278,8 +284,8 @@ userTable model =
 
 getUsersFromModel : Model -> List CmsUser
 getUsersFromModel model =
-    case model.state of
-        AllLoaded ( _, Ok users ) ->
+    case model.dataState of
+        AllLoaded ( Ok _, Ok users ) ->
             users
 
         _ ->

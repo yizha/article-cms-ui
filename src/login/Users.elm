@@ -390,7 +390,7 @@ disableNew model =
             case model.users of
                 Just ( _, Ok _ ) ->
                     case model.userOpState of
-                        Just (Deleting _) ->
+                        Just (Deleting Nothing) ->
                             True
 
                         _ ->
@@ -408,7 +408,7 @@ disableReload model =
     let
         disableIt =
             case model.userOpState of
-                Just (Deleting _) ->
+                Just (Deleting Nothing) ->
                     True
 
                 _ ->

@@ -108,7 +108,7 @@ init =
                 , Textfield.Hint "Username"
                 , Textfield.HelpAsValidationMsg True
                 , Textfield.OnInput (Just UsernameInput)
-                , Textfield.OnEnter (Just LoginRequest)
+                , Textfield.OnEnter (Just (LoginRequest (Just "login_username")))
                 ]
 
         ( passwordModel, passwordCmd ) =
@@ -119,7 +119,7 @@ init =
                 , Textfield.Hint "Password"
                 , Textfield.HelpAsValidationMsg True
                 , Textfield.OnInput (Just PasswordInput)
-                , Textfield.OnEnter (Just LoginRequest)
+                , Textfield.OnEnter (Just (LoginRequest (Just "login_password")))
                 ]
 
         m =
@@ -150,7 +150,7 @@ type Msg
     | Password (Textfield.Msg Msg)
     | UsernameInput String
     | PasswordInput String
-    | LoginRequest
+    | LoginRequest (Maybe String)
     | LoginResponse (Result Http.Error AuthData)
     | UserActivity
     | LogUserActivity Time.Time
@@ -311,12 +311,24 @@ update msg model =
             in
                 ( { model | password = pm }, Cmd.none, Global.None )
 
-        LoginRequest ->
+        LoginRequest source ->
             if model.username.value /= "" && model.password.value /= "" then
-                ( debug "login-request" { model | state = InProgress }
-                , getAuthData model.loginPath model.username.value model.password.value
-                , Global.None
-                )
+                let
+                    task =
+                        case source of
+                            Nothing ->
+                                getAuthData model.loginPath model.username.value model.password.value
+
+                            Just id ->
+                                Cmd.batch
+                                    [ Task.attempt ignore (Dom.blur id)
+                                    , getAuthData model.loginPath model.username.value model.password.value
+                                    ]
+                in
+                    ( debug "login-request" { model | state = InProgress }
+                    , task
+                    , Global.None
+                    )
             else
                 ( model, Cmd.none, Global.None )
 
@@ -391,18 +403,6 @@ otherErr model =
 view : Model -> Html Msg
 view model =
     let
-        onEnter =
-            Html.Events.on "keyup"
-                (Json.map
-                    (\code ->
-                        if code == 13 then
-                            LoginRequest
-                        else
-                            Ignore
-                    )
-                    Html.Events.keyCode
-                )
-
         um =
             (Textfield.updateModel
                 model.username
@@ -434,7 +434,7 @@ view model =
                             [ button
                                 [ class "mdc-button mdc-button--raised"
                                 , disabled (disableLoginBtn model)
-                                , onClick LoginRequest
+                                , onClick (LoginRequest Nothing)
                                 ]
                                 [ text "Login" ]
                             ]

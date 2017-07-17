@@ -1,10 +1,8 @@
 module MDC.Textfield exposing (Model, Msg, init, update, updateModel, view, InputType(..), Config(..))
 
 import Html exposing (Html, div, input, label, span, text, p)
-import Html.Attributes exposing (attribute, class, classList, type_, id, value, required, disabled)
+import Html.Attributes exposing (attribute, class, classList, type_, id, value, required, disabled, value)
 import Html.Events
-import Uuid.Barebones as Uuid
-import Random.Pcg as Random
 import Json.Decode as Json
 
 
@@ -107,14 +105,8 @@ init f confs =
             , onInput = Nothing
             , onEnter = Nothing
             }
-
-        m =
-            List.foldl configModel defaultModel confs
     in
-        if m.id == "" then
-            ( m, Cmd.map f <| Random.generate SetId Uuid.uuidStringGenerator )
-        else
-            ( m, Cmd.none )
+        ( List.foldl configModel defaultModel confs, Cmd.none )
 
 
 
@@ -123,7 +115,6 @@ init f confs =
 
 type Msg msg
     = Noop
-    | SetId String
     | Input String
     | Focus
     | Blur
@@ -139,9 +130,6 @@ update msg model =
     case msg of
         Noop ->
             ( model, Cmd.none )
-
-        SetId id ->
-            ( { model | id = id }, Cmd.none )
 
         Input v ->
             ( { model | value = v }, Cmd.none )
@@ -211,6 +199,7 @@ nativeInput model =
             , id model.id
             , class "mdc-textfield__input"
             , required model.required
+            , value model.value
             , Html.Events.onFocus (model.msgWrapper Focus)
             , Html.Events.onBlur (model.msgWrapper Blur)
             , Html.Events.onInput

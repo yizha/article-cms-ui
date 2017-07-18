@@ -85,7 +85,7 @@ configModel conf m =
             { m | onEnter = v }
 
 
-init : (Msg msg -> msg) -> List (Config msg) -> ( Model msg, Cmd msg )
+init : (Msg msg -> msg) -> List (Config msg) -> Model msg
 init f confs =
     let
         defaultModel =
@@ -106,7 +106,7 @@ init f confs =
             , onEnter = Nothing
             }
     in
-        ( List.foldl configModel defaultModel confs, Cmd.none )
+        List.foldl configModel defaultModel confs
 
 
 
@@ -125,20 +125,20 @@ updateModel model confs =
     List.foldl configModel model confs
 
 
-update : Msg msg -> Model msg -> ( Model msg, Cmd msg )
+update : Msg msg -> Model msg -> Model msg
 update msg model =
     case msg of
         Noop ->
-            ( model, Cmd.none )
+            model
 
         Input v ->
-            ( { model | value = v }, Cmd.none )
+            { model | value = v }
 
         Focus ->
-            ( { model | focused = True, init = False }, Cmd.none )
+            { model | focused = True, init = False }
 
         Blur ->
-            ( { model | focused = False }, Cmd.none )
+            { model | focused = False }
 
 
 

@@ -82,14 +82,14 @@ reload username token =
 initModel : String -> String -> Model
 initModel username token =
     let
-        ( um, _ ) =
+        um =
             Textfield.init
                 UserOpUsername
                 [ Textfield.ID "user_op_username"
                 , Textfield.Hint "Username"
                 ]
 
-        ( pm, _ ) =
+        pm =
             Textfield.init
                 UserOpPassword
                 [ Textfield.ID "user_op_password"
@@ -134,7 +134,7 @@ type Msg
     | Noop
 
 
-roleCheckboxModel : CmsRole -> ( Checkbox.Model Msg, Cmd Msg )
+roleCheckboxModel : CmsRole -> Checkbox.Model Msg
 roleCheckboxModel role =
     Checkbox.init
         (UserOpRole role.name)
@@ -143,17 +143,17 @@ roleCheckboxModel role =
         ]
 
 
-initRoleCheckboxModels : List CmsRole -> ( Dict String (Checkbox.Model Msg), List (Cmd Msg) )
+initRoleCheckboxModels : List CmsRole -> Dict String (Checkbox.Model Msg)
 initRoleCheckboxModels roles =
     List.foldl
-        (\role ( d, cmds ) ->
+        (\role d ->
             let
-                ( m, c ) =
+                m =
                     roleCheckboxModel role
             in
-                ( Dict.insert role.name m d, c :: cmds )
+                Dict.insert role.name m d
         )
-        ( Dict.empty, [] )
+        Dict.empty
         roles
 
 
@@ -292,15 +292,15 @@ update msg model =
 
         Roles path result ->
             let
-                ( d, cmds ) =
+                d =
                     case result of
                         Err _ ->
-                            ( Dict.empty, [] )
+                            Dict.empty
 
                         Ok roles ->
                             initRoleCheckboxModels roles
             in
-                ( { model | roles = Just ( path, result ), userOpRoles = d }, Cmd.batch cmds, Global.None )
+                ( { model | roles = Just ( path, result ), userOpRoles = d }, Cmd.none, Global.None )
 
         Users path result ->
             ( { model | users = Just ( path, result ) }, Cmd.none, Global.None )
@@ -349,17 +349,17 @@ update msg model =
 
         UserOpUsername u_msg ->
             let
-                ( m, c ) =
+                m =
                     Textfield.update u_msg model.userOpUsername
             in
-                ( { model | userOpUsername = m }, c, Global.None )
+                ( { model | userOpUsername = m }, Cmd.none, Global.None )
 
         UserOpPassword p_msg ->
             let
-                ( m, c ) =
+                m =
                     Textfield.update p_msg model.userOpPassword
             in
-                ( { model | userOpPassword = m }, c, Global.None )
+                ( { model | userOpPassword = m }, Cmd.none, Global.None )
 
         UserOpRole key r_msg ->
             case (Dict.get key model.userOpRoles) of
@@ -368,13 +368,13 @@ update msg model =
 
                 Just m ->
                     let
-                        ( newM, c ) =
+                        newM =
                             Checkbox.update r_msg m
 
                         roleModelMap =
                             Dict.insert key newM model.userOpRoles
                     in
-                        ( { model | userOpRoles = roleModelMap }, c, Global.None )
+                        ( { model | userOpRoles = roleModelMap }, Cmd.none, Global.None )
 
         Noop ->
             ( model, Cmd.none, Global.None )

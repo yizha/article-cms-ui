@@ -1,16 +1,17 @@
-module Login
+module Page.Login
     exposing
-        ( Model
+        ( AuthData
+        , AuthState(..)
+        , Model
         , Msg
+        , authToken
         , view
         , update
         , init
         , subscriptions
-        , authToken
-        , logout
         )
 
-import Global
+import RemoteData
 import Html exposing (..)
 import Html.Attributes exposing (href, class, style, disabled)
 import Html.Events exposing (onClick)
@@ -31,75 +32,52 @@ import MDC.Textfield as Textfield
 -- MODEL
 
 
+type alias CmsRole =
+    Int
+
+
 type alias AuthData =
     { token : String
     , expire : Time.Time
-    , role : Int
+    , role : CmsRole
     }
 
 
 type AuthError
-    = NoSuchUser Http.Error String
-    | WrongPassword Http.Error String
+    = NoSuchUser String
+    | WrongPassword String
     | OtherError Http.Error
 
 
-authError : Http.Error -> String -> String -> AuthError
-authError err username password =
-    case err of
-        Http.BadStatus resp ->
-            case resp.status.code of
-                403 ->
-                    case resp.body of
-                        "username" ->
-                            NoSuchUser err username
-
-                        "password" ->
-                            WrongPassword err password
-
-                        _ ->
-                            OtherError err
-
-                _ ->
-                    OtherError err
-
-        _ ->
-            OtherError err
-
-
-type State
-    = Authorized AuthData
-    | Unauthorized (Maybe AuthError)
-    | InProgress
+type AuthState
+    = Unauthorized
+    | AuthInProgress
+    | AuthSuccess AuthData
+    | AuthFailure AuthError
 
 
 type alias Model =
     { loginPath : String
+    , maxIdleTime : Time.Time
+    , lastActivityTime : Maybe Time.Time
     , username : Textfield.Model Msg
     , password : Textfield.Model Msg
-    , state : State
-    , lastActivityTime : Maybe Time.Time
-    , maxIdleTime : Time.Time
+    , auth : AuthState
     }
 
 
 authToken : Model -> Maybe String
 authToken model =
-    case model.state of
-        Authorized data ->
+    case model.auth of
+        AuthSuccess data ->
             Just data.token
 
         _ ->
             Nothing
 
 
-logout : Model -> ( Model, Cmd Msg )
-logout model =
-    init
-
-
-init : ( Model, Cmd Msg )
-init =
+init : String -> Time.Time -> ( Model, Cmd Msg )
+init loginPath maxIdleTime =
     let
         usernameModel =
             Textfield.init
@@ -123,12 +101,12 @@ init =
                 ]
 
         m =
-            { loginPath = "/api/manage/login"
+            { loginPath = loginPath
+            , maxIdleTime = maxIdleTime
+            , lastActivityTime = Nothing
             , username = usernameModel
             , password = passwordModel
-            , state = Unauthorized Nothing
-            , lastActivityTime = Nothing
-            , maxIdleTime = (Time.minute * 30)
+            , auth = Unauthorized
             }
     in
         m ! [ Task.attempt ignore (Dom.focus "login_username") ]
@@ -139,8 +117,7 @@ init =
 
 
 type Msg
-    = Ignore
-    | Username (Textfield.Msg Msg)
+    = Username (Textfield.Msg Msg)
     | Password (Textfield.Msg Msg)
     | UsernameInput String
     | PasswordInput String
@@ -149,11 +126,12 @@ type Msg
     | UserActivity
     | LogUserActivity Time.Time
     | CheckIdleTimeout Time.Time
+    | Noop
 
 
 ignore : a -> Msg
 ignore =
-    always Ignore
+    always Noop
 
 
 checkIdleTimeout : Time.Time -> Model -> ( Model, Cmd Msg )
@@ -161,22 +139,45 @@ checkIdleTimeout now model =
     case model.lastActivityTime of
         Just t ->
             if now - t > model.maxIdleTime then
-                init
+                init model.loginPath model.maxIdleTime
             else
-                ( model, Cmd.none )
+                model ! []
 
         Nothing ->
-            ( model, Cmd.none )
+            model ! []
 
 
-handleLoginErr : Http.Error -> Model -> ( Model, Cmd Msg, Global.Event )
+authError : Http.Error -> String -> String -> AuthError
+authError err username password =
+    case err of
+        Http.BadStatus resp ->
+            case resp.status.code of
+                403 ->
+                    case resp.body of
+                        "username" ->
+                            NoSuchUser username
+
+                        "password" ->
+                            WrongPassword password
+
+                        _ ->
+                            OtherError err
+
+                _ ->
+                    OtherError err
+
+        _ ->
+            OtherError err
+
+
+handleLoginErr : Http.Error -> Model -> ( Model, Cmd Msg )
 handleLoginErr err model =
     let
         authErr =
             authError err model.username.value model.password.value
 
         m1 =
-            { model | state = Unauthorized (Just authErr) }
+            { model | auth = AuthFailure authErr }
 
         um =
             Textfield.updateModel
@@ -197,9 +198,9 @@ handleLoginErr err model =
     in
         case authErr of
             OtherError err ->
-                ( m2, Cmd.none, Global.None )
+                m2 ! []
 
-            NoSuchUser _ _ ->
+            NoSuchUser _ ->
                 let
                     um =
                         Textfield.updateModel
@@ -207,13 +208,13 @@ handleLoginErr err model =
                             [ Textfield.Help "No such user!"
                             , Textfield.Valid False
                             ]
-                in
-                    ( { m2 | username = um }
-                    , Task.attempt ignore (Dom.focus "login_username")
-                    , Global.None
-                    )
 
-            WrongPassword _ _ ->
+                    cmds =
+                        [ Task.attempt ignore (Dom.focus "login_username") ]
+                in
+                    { m2 | username = um } ! cmds
+
+            WrongPassword _ ->
                 let
                     pm =
                         Textfield.updateModel
@@ -221,14 +222,17 @@ handleLoginErr err model =
                             [ Textfield.Help "Wrong password!"
                             , Textfield.Valid False
                             ]
+
+                    cmds =
+                        [ Task.attempt ignore (Dom.focus "login_password") ]
                 in
-                    ( { m2 | password = pm }, Task.attempt ignore (Dom.focus "login_password"), Global.None )
+                    { m2 | password = pm } ! cmds
 
 
 handleUsernameInput : Model -> String -> Textfield.Model Msg
 handleUsernameInput model username =
-    case model.state of
-        Unauthorized (Just (NoSuchUser _ wrongUsername)) ->
+    case model.auth of
+        AuthFailure (NoSuchUser wrongUsername) ->
             if username == wrongUsername then
                 Textfield.updateModel
                     model.username
@@ -250,8 +254,8 @@ handleUsernameInput model username =
 
 handlePasswordInput : Model -> String -> Textfield.Model Msg
 handlePasswordInput model password =
-    case model.state of
-        Unauthorized (Just (WrongPassword _ wrongPassword)) ->
+    case model.auth of
+        AuthFailure (WrongPassword wrongPassword) ->
             if password == wrongPassword then
                 Textfield.updateModel
                     model.password
@@ -271,82 +275,60 @@ handlePasswordInput model password =
             (Textfield.updateModel model.password [ Textfield.Value password ])
 
 
-update : Msg -> Model -> ( Model, Cmd Msg, Global.Event )
+handleLoginRequest : Model -> Maybe String -> ( Model, Cmd Msg )
+handleLoginRequest model source =
+    if model.username.value /= "" && model.password.value /= "" then
+        let
+            cmds =
+                case source of
+                    Nothing ->
+                        [ getAuthData model.loginPath model.username.value model.password.value ]
+
+                    Just id ->
+                        [ Task.attempt ignore (Dom.blur id)
+                        , getAuthData model.loginPath model.username.value model.password.value
+                        ]
+        in
+            (debug "login-request" { model | auth = AuthInProgress }) ! cmds
+    else
+        model ! []
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
-        Ignore ->
-            ( model, Cmd.none, Global.None )
+        Noop ->
+            model ! []
 
         Username tfm ->
-            let
-                m =
-                    Textfield.update tfm model.username
-            in
-                ( { model | username = m }, Cmd.none, Global.None )
+            { model | username = Textfield.update tfm model.username } ! []
 
         Password tfm ->
-            let
-                m =
-                    Textfield.update tfm model.password
-            in
-                ( { model | password = m }, Cmd.none, Global.None )
+            { model | password = Textfield.update tfm model.password } ! []
 
         UsernameInput v ->
-            let
-                um =
-                    handleUsernameInput model v
-            in
-                ( { model | username = um }, Cmd.none, Global.None )
+            { model | username = handleUsernameInput model v } ! []
 
         PasswordInput v ->
-            let
-                pm =
-                    handlePasswordInput model v
-            in
-                ( { model | password = pm }, Cmd.none, Global.None )
+            { model | password = handlePasswordInput model v } ! []
 
         LoginRequest source ->
-            if model.username.value /= "" && model.password.value /= "" then
-                let
-                    task =
-                        case source of
-                            Nothing ->
-                                getAuthData model.loginPath model.username.value model.password.value
-
-                            Just id ->
-                                Cmd.batch
-                                    [ Task.attempt ignore (Dom.blur id)
-                                    , getAuthData model.loginPath model.username.value model.password.value
-                                    ]
-                in
-                    ( debug "login-request" { model | state = InProgress }
-                    , task
-                    , Global.None
-                    )
-            else
-                ( model, Cmd.none, Global.None )
+            handleLoginRequest model source
 
         LoginResponse (Ok authdata) ->
-            ( debug "login-ok" { model | state = Authorized authdata }
-            , Task.perform LogUserActivity Time.now
-            , Global.Login model.username.value authdata.token
-            )
+            debug "login-ok" { model | auth = AuthSuccess authdata } ! []
 
         LoginResponse (Err err) ->
             handleLoginErr err model
 
         UserActivity ->
-            ( model, Task.perform LogUserActivity Time.now, Global.None )
+            model ! [ Task.perform LogUserActivity Time.now ]
 
         LogUserActivity time ->
-            ( { model | lastActivityTime = Just time }, Cmd.none, Global.None )
+            { model | lastActivityTime = Just time } ! []
 
         CheckIdleTimeout time ->
-            let
-                ( m, c ) =
-                    checkIdleTimeout time model
-            in
-                ( debug "login-check" m, c, Global.None )
+            checkIdleTimeout time model
 
 
 
@@ -355,13 +337,13 @@ update msg model =
 
 disableLoginBtn : Model -> Bool
 disableLoginBtn model =
-    model.username.value == "" || model.password.value == "" || model.state == InProgress
+    model.username.value == "" || model.password.value == "" || model.auth == AuthInProgress
 
 
 noSuchUserErr : Model -> String
 noSuchUserErr model =
-    case model.state of
-        Unauthorized (Just (NoSuchUser _ username)) ->
+    case model.auth of
+        AuthFailure (NoSuchUser username) ->
             if model.username.value == username then
                 "No such user!"
             else
@@ -373,8 +355,8 @@ noSuchUserErr model =
 
 wrongPasswordErr : Model -> String
 wrongPasswordErr model =
-    case model.state of
-        Unauthorized (Just (WrongPassword _ password)) ->
+    case model.auth of
+        AuthFailure (WrongPassword password) ->
             if model.password.value == password then
                 "Wrong password!"
             else
@@ -386,8 +368,8 @@ wrongPasswordErr model =
 
 otherErr : Model -> String
 otherErr model =
-    case model.state of
-        Unauthorized (Just (OtherError err)) ->
+    case model.auth of
+        AuthFailure (OtherError err) ->
             httpErrorString model.loginPath err
 
         _ ->
@@ -400,13 +382,13 @@ view model =
         um =
             (Textfield.updateModel
                 model.username
-                [ Textfield.Disabled (model.state == InProgress) ]
+                [ Textfield.Disabled (model.auth == AuthInProgress) ]
             )
 
         pm =
             (Textfield.updateModel
                 model.password
-                [ Textfield.Disabled (model.state == InProgress) ]
+                [ Textfield.Disabled (model.auth == AuthInProgress) ]
             )
     in
         ul [ style [ ( "list-style-type", "none" ) ] ]
@@ -448,8 +430,8 @@ view model =
 
 subscriptions : Model -> Sub Msg
 subscriptions model =
-    case model.state of
-        Authorized _ ->
+    case model.auth of
+        AuthSuccess _ ->
             Sub.batch
                 [ Mouse.clicks (\_ -> UserActivity)
                 , Keyboard.presses (\_ -> UserActivity)

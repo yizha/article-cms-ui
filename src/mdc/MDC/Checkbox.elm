@@ -45,7 +45,7 @@ configModel conf m =
             { m | onCheck = v }
 
 
-init : (Msg msg -> msg) -> List (Config msg) -> ( Model msg, Cmd msg )
+init : (Msg msg -> msg) -> List (Config msg) -> Model msg
 init f confs =
     let
         defaultModel =
@@ -57,7 +57,7 @@ init f confs =
             , msgWrapper = f
             }
     in
-        ( List.foldl configModel defaultModel confs, Cmd.none )
+        List.foldl configModel defaultModel confs
 
 
 
@@ -74,14 +74,14 @@ updateModel model confs =
     List.foldl configModel model confs
 
 
-update : Msg msg -> Model msg -> ( Model msg, Cmd msg )
+update : Msg msg -> Model msg -> Model msg
 update msg model =
     case msg of
         Noop ->
-            ( model, Cmd.none )
+            model
 
         Check v ->
-            ( { model | checked = v }, Cmd.none )
+            { model | checked = v }
 
 
 

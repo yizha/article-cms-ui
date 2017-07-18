@@ -11,6 +11,7 @@ module Users
 
 import Global
 import Html exposing (..)
+import Html.Keyed
 import Html.Attributes exposing (href, class, style, disabled, type_)
 import Html.Events exposing (onClick)
 import Dom
@@ -472,9 +473,10 @@ userNameSpan loginUsername username =
         span [] [ text username ]
 
 
-userRow : Model -> CmsUser -> Html Msg
+userRow : Model -> CmsUser -> ( String, Html Msg )
 userRow model user =
-    tr []
+    ( user.username
+    , tr []
         [ td [] [ userNameSpan model.loginUsername user.username ]
         , td []
             [ ul
@@ -501,6 +503,7 @@ userRow model user =
                 [ text "Delete" ]
             ]
         ]
+    )
 
 
 dataErrLi : Maybe ( String, Result Http.Error a ) -> Maybe (Html Msg)
@@ -564,7 +567,7 @@ userTable model =
                             ]
                         ]
                     ]
-                , tbody [] (List.map (userRow model) users)
+                , Html.Keyed.node "tbody" [] (List.map (userRow model) users)
                 ]
             ]
 

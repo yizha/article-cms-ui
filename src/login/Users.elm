@@ -25,7 +25,7 @@ import Dict exposing (Dict)
 import Json.Decode as Json
 import Json.Decode.Extra as JsonExtra
 import Common.Debug exposing (debug)
-import Common.Util exposing (httpErrorString)
+import Common.Util exposing (httpErrorString, httpGetJson)
 import MDC.Textfield as Textfield
 import MDC.Checkbox as Checkbox
 
@@ -762,26 +762,9 @@ deleteUser token user =
         Http.send (UserOpDeleteResult path) req
 
 
-getValue : String -> String -> Json.Decoder a -> (Result Http.Error a -> Msg) -> Cmd Msg
-getValue path token decoder msgGenerator =
-    let
-        req =
-            Http.request
-                { method = "GET"
-                , headers = [ Http.header "X-Auth-Token" token ]
-                , url = path
-                , body = Http.emptyBody
-                , expect = Http.expectJson decoder
-                , timeout = Just (Time.second * 5)
-                , withCredentials = False
-                }
-    in
-        Http.send msgGenerator req
-
-
 getRoles : String -> String -> Cmd Msg
 getRoles path token =
-    getValue path token decodeRoles (Roles path)
+    httpGetJson path token decodeRoles (Roles path)
 
 
 decodeRoles : Json.Decoder (List CmsRole)
@@ -795,7 +778,7 @@ decodeRoles =
 
 getUsers : String -> String -> Cmd Msg
 getUsers path token =
-    getValue path token decodeUsers (Users path)
+    httpGetJson path token decodeUsers (Users path)
 
 
 decodeUsers : Json.Decoder (List CmsUser)

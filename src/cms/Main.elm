@@ -1,9 +1,9 @@
 module Main exposing (main)
 
-import Defs exposing (Model, Msg(..))
+import Defs exposing (..)
 import Html exposing (Html, div, text)
-import Page.Login as LoginPage
-import RemoteData
+import Component.Login as LoginComp
+import Component.Article as ArticleComp
 import Time
 
 
@@ -28,32 +28,37 @@ init : ( Model, Cmd Msg )
 init =
     let
         ( loginModel, loginCmd ) =
-            LoginPage.init "/api/login" (Time.minute * 30)
+            LoginComp.init "/api/login" "Article CMS" (Time.minute * 30)
+
+        ( articleModel, articleCmd ) =
+            ArticleComp.init
     in
-        { login = loginModel } ! [ Cmd.map Login loginCmd ]
+        ( { lockUI = False
+          , login = loginModel
+          , article = articleModel
+          }
+        , Cmd.batch
+            [ loginCmd
+            , articleCmd
+            ]
+        )
 
 
 
 -- UPDATE
 
 
-handleLoginPageUpdate : LoginPage.Msg -> Model -> ( Model, Cmd Msg )
-handleLoginPageUpdate msg model =
-    let
-        ( m, c ) =
-            LoginPage.update msg model.login
-    in
-        { model | login = m } ! [ Cmd.map Login c ]
-
-
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
-        Defs.Noop ->
-            model ! []
+        Login loginMsg ->
+            LoginComp.update loginMsg model
 
-        Defs.Login loginMsg ->
-            handleLoginPageUpdate loginMsg model
+        Article articleMsg ->
+            ArticleComp.update articleMsg model
+
+        Noop ->
+            model ! []
 
 
 
@@ -62,12 +67,10 @@ update msg model =
 
 view : Model -> Html Msg
 view model =
-    case model.login.auth of
-        LoginPage.AuthSuccess _ ->
-            div [] [ text "logged in" ]
-
-        _ ->
-            Html.map Login (LoginPage.view model.login)
+    div []
+        [ LoginComp.view model
+        , ArticleComp.view model
+        ]
 
 
 
@@ -76,8 +79,4 @@ view model =
 
 subscriptions : Model -> Sub Msg
 subscriptions model =
-    let
-        loginSubs =
-            LoginPage.subscriptions model.login
-    in
-        Sub.batch [ Sub.map Defs.Login loginSubs ]
+    Sub.batch [ LoginComp.subscriptions model ]

@@ -1,17 +1,12 @@
-module Page.Login
+module Component.Login
     exposing
-        ( AuthData
-        , AuthState(..)
-        , Model
-        , Msg
-        , authToken
-        , view
+        ( view
         , update
         , init
         , subscriptions
         )
 
-import RemoteData
+import Defs exposing (CmsRole, AuthData, AuthError(..), AuthState(..), Model, LoginModel, Msg(Login), LoginMsg(..))
 import Html exposing (..)
 import Html.Attributes exposing (href, class, style, disabled)
 import Html.Events exposing (onClick)
@@ -22,8 +17,6 @@ import Http
 import Task
 import Mouse
 import Keyboard
-import Json.Decode as Json
-import Json.Decode.Extra as JsonExtra
 import Common.Debug exposing (debug)
 import Common.Util exposing (httpErrorString)
 import MDC.Textfield as Textfield
@@ -32,76 +25,42 @@ import MDC.Textfield as Textfield
 -- MODEL
 
 
-type alias CmsRole =
-    Int
+init : String -> String -> Time.Time -> ( LoginModel, Cmd Msg )
+init loginPath title maxIdleTime =
+    let
+        ( m, c ) =
+            init_ loginPath title maxIdleTime
+    in
+        ( m, Cmd.map Login c )
 
 
-type alias AuthData =
-    { token : String
-    , expire : Time.Time
-    , role : CmsRole
-    }
-
-
-type AuthError
-    = NoSuchUser String
-    | WrongPassword String
-    | OtherError Http.Error
-
-
-type AuthState
-    = Unauthorized
-    | AuthInProgress
-    | AuthSuccess AuthData
-    | AuthFailure AuthError
-
-
-type alias Model =
-    { loginPath : String
-    , maxIdleTime : Time.Time
-    , lastActivityTime : Maybe Time.Time
-    , username : Textfield.Model Msg
-    , password : Textfield.Model Msg
-    , auth : AuthState
-    }
-
-
-authToken : Model -> Maybe String
-authToken model =
-    case model.auth of
-        AuthSuccess data ->
-            Just data.token
-
-        _ ->
-            Nothing
-
-
-init : String -> Time.Time -> ( Model, Cmd Msg )
-init loginPath maxIdleTime =
+init_ : String -> String -> Time.Time -> ( LoginModel, Cmd LoginMsg )
+init_ loginPath title maxIdleTime =
     let
         usernameModel =
             Textfield.init
-                Username
+                LoginUsername
                 [ Textfield.ID "login_username"
                 , Textfield.Hint "Username"
                 , Textfield.HelpAsValidationMsg True
-                , Textfield.OnInput (Just UsernameInput)
+                , Textfield.OnInput (Just LoginUsernameInput)
                 , Textfield.OnEnter (Just (LoginRequest (Just "login_username")))
                 ]
 
         passwordModel =
             Textfield.init
-                Password
+                LoginPassword
                 [ Textfield.Type Textfield.Password
                 , Textfield.ID "login_password"
                 , Textfield.Hint "Password"
                 , Textfield.HelpAsValidationMsg True
-                , Textfield.OnInput (Just PasswordInput)
+                , Textfield.OnInput (Just LoginPasswordInput)
                 , Textfield.OnEnter (Just (LoginRequest (Just "login_password")))
                 ]
 
         m =
             { loginPath = loginPath
+            , title = title
             , maxIdleTime = maxIdleTime
             , lastActivityTime = Nothing
             , username = usernameModel
@@ -116,30 +75,17 @@ init loginPath maxIdleTime =
 -- ACTION, UPDATE
 
 
-type Msg
-    = Username (Textfield.Msg Msg)
-    | Password (Textfield.Msg Msg)
-    | UsernameInput String
-    | PasswordInput String
-    | LoginRequest (Maybe String)
-    | LoginResponse (Result Http.Error AuthData)
-    | UserActivity
-    | LogUserActivity Time.Time
-    | CheckIdleTimeout Time.Time
-    | Noop
-
-
-ignore : a -> Msg
+ignore : a -> LoginMsg
 ignore =
-    always Noop
+    always LoginNoop
 
 
-checkIdleTimeout : Time.Time -> Model -> ( Model, Cmd Msg )
+checkIdleTimeout : Time.Time -> LoginModel -> ( LoginModel, Cmd LoginMsg )
 checkIdleTimeout now model =
     case model.lastActivityTime of
         Just t ->
             if now - t > model.maxIdleTime then
-                init model.loginPath model.maxIdleTime
+                init_ model.loginPath model.title model.maxIdleTime
             else
                 model ! []
 
@@ -170,7 +116,7 @@ authError err username password =
             OtherError err
 
 
-handleLoginErr : Http.Error -> Model -> ( Model, Cmd Msg )
+handleLoginErr : Http.Error -> LoginModel -> ( LoginModel, Cmd LoginMsg )
 handleLoginErr err model =
     let
         authErr =
@@ -229,7 +175,7 @@ handleLoginErr err model =
                     { m2 | password = pm } ! cmds
 
 
-handleUsernameInput : Model -> String -> Textfield.Model Msg
+handleUsernameInput : LoginModel -> String -> Textfield.Model LoginMsg
 handleUsernameInput model username =
     case model.auth of
         AuthFailure (NoSuchUser wrongUsername) ->
@@ -252,7 +198,7 @@ handleUsernameInput model username =
             Textfield.updateModel model.username [ Textfield.Value username ]
 
 
-handlePasswordInput : Model -> String -> Textfield.Model Msg
+handlePasswordInput : LoginModel -> String -> Textfield.Model LoginMsg
 handlePasswordInput model password =
     case model.auth of
         AuthFailure (WrongPassword wrongPassword) ->
@@ -275,7 +221,7 @@ handlePasswordInput model password =
             (Textfield.updateModel model.password [ Textfield.Value password ])
 
 
-handleLoginRequest : Model -> Maybe String -> ( Model, Cmd Msg )
+handleLoginRequest : LoginModel -> Maybe String -> ( LoginModel, Cmd LoginMsg )
 handleLoginRequest model source =
     if model.username.value /= "" && model.password.value /= "" then
         let
@@ -294,22 +240,31 @@ handleLoginRequest model source =
         model ! []
 
 
-update : Msg -> Model -> ( Model, Cmd Msg )
+update : LoginMsg -> Model -> ( Model, Cmd Msg )
 update msg model =
+    let
+        ( m, c ) =
+            update_ msg model.login
+    in
+        ( { model | login = m }, Cmd.map Login c )
+
+
+update_ : LoginMsg -> LoginModel -> ( LoginModel, Cmd LoginMsg )
+update_ msg model =
     case msg of
-        Noop ->
+        LoginNoop ->
             model ! []
 
-        Username tfm ->
+        LoginUsername tfm ->
             { model | username = Textfield.update tfm model.username } ! []
 
-        Password tfm ->
+        LoginPassword tfm ->
             { model | password = Textfield.update tfm model.password } ! []
 
-        UsernameInput v ->
+        LoginUsernameInput v ->
             { model | username = handleUsernameInput model v } ! []
 
-        PasswordInput v ->
+        LoginPasswordInput v ->
             { model | password = handlePasswordInput model v } ! []
 
         LoginRequest source ->
@@ -321,26 +276,29 @@ update msg model =
         LoginResponse (Err err) ->
             handleLoginErr err model
 
-        UserActivity ->
-            model ! [ Task.perform LogUserActivity Time.now ]
+        LoginUserActivity ->
+            model ! [ Task.perform LoginLogUserActivity Time.now ]
 
-        LogUserActivity time ->
+        LoginLogUserActivity time ->
             { model | lastActivityTime = Just time } ! []
 
-        CheckIdleTimeout time ->
+        LoginCheckIdleTimeout time ->
             checkIdleTimeout time model
+
+        LoginLogout ->
+            init_ model.loginPath model.title model.maxIdleTime
 
 
 
 -- VIEW
 
 
-disableLoginBtn : Model -> Bool
+disableLoginBtn : LoginModel -> Bool
 disableLoginBtn model =
     model.username.value == "" || model.password.value == "" || model.auth == AuthInProgress
 
 
-noSuchUserErr : Model -> String
+noSuchUserErr : LoginModel -> String
 noSuchUserErr model =
     case model.auth of
         AuthFailure (NoSuchUser username) ->
@@ -353,7 +311,7 @@ noSuchUserErr model =
             ""
 
 
-wrongPasswordErr : Model -> String
+wrongPasswordErr : LoginModel -> String
 wrongPasswordErr model =
     case model.auth of
         AuthFailure (WrongPassword password) ->
@@ -366,7 +324,7 @@ wrongPasswordErr model =
             ""
 
 
-otherErr : Model -> String
+otherErr : LoginModel -> String
 otherErr model =
     case model.auth of
         AuthFailure (OtherError err) ->
@@ -378,6 +336,45 @@ otherErr model =
 
 view : Model -> Html Msg
 view model =
+    Html.map Login (view_ model)
+
+
+view_ : Model -> Html LoginMsg
+view_ model =
+    case model.login.auth of
+        AuthSuccess data ->
+            authorizedView model.lockUI model.login
+
+        _ ->
+            unauthorizedView model.login
+
+
+authorizedView : Bool -> LoginModel -> Html LoginMsg
+authorizedView lockUI model =
+    div []
+        [ header [ class "mdc-toolbar mdc-toolbar--fixed" ]
+            [ div
+                [ class "mdc-toolbar__row" ]
+                [ section [ class "mdc-toolbar__section mdc-toolbar__section--align-start" ]
+                    [ span [ class "mdc-toolbar__title" ]
+                        [ text model.title ]
+                    ]
+                , section [ class "mdc-toolbar__section mdc-toolbar__section--align-end" ]
+                    [ button
+                        [ class "mdc-button mdc-theme--text-primary-on-dark"
+                        , disabled lockUI
+                        , onClick LoginLogout
+                        ]
+                        [ text ("Logout (" ++ model.username.value ++ ")") ]
+                    ]
+                ]
+            ]
+        , div [ class "mdc-toolbar-fixed-adjust" ] []
+        ]
+
+
+unauthorizedView : LoginModel -> Html LoginMsg
+unauthorizedView model =
     let
         um =
             (Textfield.updateModel
@@ -430,12 +427,17 @@ view model =
 
 subscriptions : Model -> Sub Msg
 subscriptions model =
+    Sub.map Login (subscriptions_ model.login)
+
+
+subscriptions_ : LoginModel -> Sub LoginMsg
+subscriptions_ model =
     case model.auth of
         AuthSuccess _ ->
             Sub.batch
-                [ Mouse.clicks (\_ -> UserActivity)
-                , Keyboard.presses (\_ -> UserActivity)
-                , Time.every Time.minute CheckIdleTimeout
+                [ Mouse.clicks (\_ -> LoginUserActivity)
+                , Keyboard.presses (\_ -> LoginUserActivity)
+                , Time.every Time.minute LoginCheckIdleTimeout
                 ]
 
         _ ->
@@ -446,18 +448,10 @@ subscriptions model =
 -- HTTP
 
 
-getAuthData : String -> String -> String -> Cmd Msg
+getAuthData : String -> String -> String -> Cmd LoginMsg
 getAuthData path username password =
     let
         url =
             path ++ "?username=" ++ username ++ "&password=" ++ password
     in
-        Http.send LoginResponse (Http.get url decodeAuthData)
-
-
-decodeAuthData : Json.Decoder AuthData
-decodeAuthData =
-    Json.map3 AuthData
-        (Json.field "token" Json.string)
-        (Json.map Date.toTime (Json.field "expire" JsonExtra.date))
-        (Json.field "role" Json.int)
+        Http.send LoginResponse (Http.get url Defs.decodeAuthData)

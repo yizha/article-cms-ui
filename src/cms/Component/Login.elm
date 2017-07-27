@@ -454,4 +454,4 @@ getAuthData path username password =
         url =
             path ++ "?username=" ++ username ++ "&password=" ++ password
     in
-        Http.send LoginResponse (Http.get url Defs.decodeAuthData)
+        Http.send LoginResponse (Http.get url (Defs.decodeAuthData username))

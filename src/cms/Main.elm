@@ -48,11 +48,41 @@ init =
 -- UPDATE
 
 
+handleLoginStateChange : Model -> Model -> ( Model, Cmd Msg )
+handleLoginStateChange prevModel newModel =
+    case prevModel.login.auth of
+        AuthSuccess _ ->
+            case newModel.login.auth of
+                Unauthorized ->
+                    ArticleComp.logout newModel
+
+                _ ->
+                    ( newModel, Cmd.none )
+
+        AuthInProgress ->
+            case newModel.login.auth of
+                AuthSuccess data ->
+                    ArticleComp.login data newModel
+
+                _ ->
+                    ( newModel, Cmd.none )
+
+        _ ->
+            ( newModel, Cmd.none )
+
+
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
         Login loginMsg ->
-            LoginComp.update loginMsg model
+            let
+                ( m, c ) =
+                    LoginComp.update loginMsg model
+
+                ( m1, c1 ) =
+                    handleLoginStateChange model m
+            in
+                m1 ! [ c, c1 ]
 
         Article articleMsg ->
             ArticleComp.update articleMsg model

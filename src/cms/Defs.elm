@@ -9,6 +9,7 @@ import Json.Encode as JsonEncode
 import Json.Decode as Json
 import Json.Decode.Extra as JsonExtra
 import MDC.Textfield as Textfield
+import Common.Debug exposing (debug)
 
 
 type alias CmsRole =
@@ -55,9 +56,9 @@ hasCmsRole role v =
         x == (Bitwise.and role x)
 
 
-hasCmsRoles : CmsRole -> List CmsRoleValue -> Bool
-hasCmsRoles role values =
-    List.all (hasCmsRole role) values
+hasAnyCmsRole : CmsRole -> List CmsRoleValue -> Bool
+hasAnyCmsRole role values =
+    List.any (hasCmsRole role) values
 
 
 type alias AuthData =
@@ -184,7 +185,9 @@ decodeArticleVersion =
 
 
 type alias CmsArticle =
-    { draft : Maybe ArticleDraft
+    { guid : String
+    , createdAt : Date
+    , draft : Maybe ArticleDraft
     , versions : Maybe (List ArticleVersion)
     , publish : Maybe ArticleVersion
     }
@@ -192,10 +195,107 @@ type alias CmsArticle =
 
 decodeCmsArticle : Json.Decoder CmsArticle
 decodeCmsArticle =
-    Json.map3 CmsArticle
+    Json.map5 CmsArticle
+        (Json.field "guid" Json.string)
+        (Json.field "created_at" JsonExtra.date)
         (Json.maybe (Json.field "draft" decodeArticleDraft))
         (Json.maybe (Json.field "versions" (Json.list decodeArticleVersion)))
         (Json.maybe (Json.field "publish" decodeArticleVersion))
+
+
+type CmsArticleVersion
+    = CmsArticleVersionOnly ArticleVersion
+    | CmsArticleVersionEditing ArticleVersion ArticleDraft
+    | CmsArticleVersionPublished ArticleVersion ArticleVersion
+    | CmsArticleVersionEditingAndPublished ArticleVersion ArticleDraft ArticleVersion
+
+
+getArticleVersion : CmsArticleVersion -> ArticleVersion
+getArticleVersion a =
+    case a of
+        CmsArticleVersionOnly v ->
+            v
+
+        CmsArticleVersionEditing v _ ->
+            v
+
+        CmsArticleVersionPublished v _ ->
+            v
+
+        CmsArticleVersionEditingAndPublished v _ _ ->
+            v
+
+
+type CmsArticleViewData
+    = CmsArticleViewDataDraft ArticleDraft
+    | CmsArticleViewDataVersions (List CmsArticleVersion) CmsArticleVersion (List CmsArticleVersion)
+
+
+type alias CmsArticleView =
+    { guid : String
+    , createdAt : Date
+    , data : CmsArticleViewData
+    }
+
+
+cmsArticle2ViewData : CmsArticle -> Maybe CmsArticleViewData
+cmsArticle2ViewData article =
+    case article.versions of
+        Nothing ->
+            case article.draft of
+                Nothing ->
+                    Nothing
+
+                Just draft ->
+                    Just (CmsArticleViewDataDraft draft)
+
+        Just versions ->
+            let
+                viewDataVersions =
+                    List.map
+                        (\v ->
+                            case article.draft of
+                                Nothing ->
+                                    case article.publish of
+                                        Nothing ->
+                                            CmsArticleVersionOnly v
+
+                                        Just publish ->
+                                            CmsArticleVersionPublished v publish
+
+                                Just draft ->
+                                    case article.publish of
+                                        Nothing ->
+                                            CmsArticleVersionEditing v draft
+
+                                        Just publish ->
+                                            CmsArticleVersionEditingAndPublished v draft publish
+                        )
+                        versions
+
+                head =
+                    List.head viewDataVersions
+
+                rest =
+                    List.tail viewDataVersions
+            in
+                case head of
+                    Nothing ->
+                        Nothing
+
+                    Just h ->
+                        Just
+                            (CmsArticleViewDataVersions
+                                []
+                                h
+                                (case rest of
+                                    Nothing ->
+                                        []
+
+                                    Just x ->
+                                        x
+                                )
+                            )
 
 
 type alias CmsArticleListResponse =
@@ -209,6 +309,37 @@ decodeCmsArticleListResponse =
     Json.map2 CmsArticleListResponse
         (Json.field "articles" (Json.list decodeCmsArticle))
         (Json.maybe (Json.field "cursor_mark" Json.string))
+
+
+type alias CmsArticleListView =
+    { articles : List CmsArticleView
+    , cursorMark : Maybe String
+    }
+
+
+cmsArticleList2View : CmsArticleListResponse -> CmsArticleListView
+cmsArticleList2View resp =
+    { resp
+        | articles =
+            List.filterMap
+                (\x ->
+                    let
+                        data =
+                            cmsArticle2ViewData x
+                    in
+                        case data of
+                            Nothing ->
+                                Nothing
+
+                            Just d ->
+                                Just
+                                    { guid = x.guid
+                                    , createdAt = x.createdAt
+                                    , data = d
+                                    }
+                )
+                resp.articles
+    }
 
 
 type ArticleListState
@@ -229,7 +360,7 @@ type ArticlePageState
 
 type alias ArticleModel =
     { state : ArticlePageState
-    , articles : Result AjaxError CmsArticleListResponse
+    , articles : Result AjaxError CmsArticleListView
     , edited : Bool
     , headline : Textfield.Model ArticleMsg
     , summary : Textfield.Model ArticleMsg
@@ -283,6 +414,8 @@ type ArticleMsg
     | ArticleClose
     | ArticleReload
     | ArticleListLoaded String (Result Http.Error CmsArticleListResponse)
+    | ArticleVersionSelect String String
+    | ArticleOpenDraft ArticleDraft
     | ArticleNoop
 
 

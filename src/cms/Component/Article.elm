@@ -13,22 +13,31 @@ import Defs
         , ArticleEditMode(..)
         , AjaxError
         , ArticleDraft
+        , ArticleVersion
         , decodeArticleDraft
         , encodeArticleDraft
         , CmsArticle
+        , CmsArticleView
+        , CmsArticleViewData(..)
+        , CmsArticleVersion(..)
+        , getArticleVersion
         , CmsArticleListResponse
+        , CmsArticleListView
+        , cmsArticleList2View
         , decodeCmsArticle
         , decodeCmsArticleListResponse
         , CmsRoleValue(..)
         , hasCmsRole
-        , hasCmsRoles
+        , hasAnyCmsRole
         )
 import Task
 import Bitwise
+import Json.Decode as Json
 import Http
-import Html exposing (Html, div, text, button, span, label)
-import Html.Attributes exposing (class, disabled, style)
-import Html.Events exposing (onClick)
+import Html exposing (Html, div, text, button, span, label, select, option, p)
+import Html.Attributes exposing (class, disabled, style, selected, value)
+import Html.Events exposing (onClick, on, targetValue)
+import Html.Keyed
 import Common.Debug exposing (debug)
 import Common.Util
     exposing
@@ -40,9 +49,9 @@ import Common.Util
 import MDC.Textfield as Textfield
 
 
-initArticles : CmsArticleListResponse
+initArticles : CmsArticleListView
 initArticles =
-    CmsArticleListResponse [] Nothing
+    CmsArticleListView [] Nothing
 
 
 initModel : ArticleModel
@@ -117,13 +126,15 @@ handleArticleListLoaded path result model =
         Ok resp ->
             { model
                 | state = ArticlePageListing ArticleListLoadedSuccess Nothing
-                , articles = Ok resp
+                , articles = Ok (cmsArticleList2View resp)
+                , edited = False
             }
 
         Err err ->
             { model
                 | state = ArticlePageListing ArticleListLoadedFailure Nothing
                 , articles = Err (AjaxError path err)
+                , edited = False
             }
 
 
@@ -142,39 +153,47 @@ clearListingActionError model =
             model
 
 
+editArticle : ArticleDraft -> ArticleModel -> ArticleModel
+editArticle draft model =
+    let
+        hm =
+            Textfield.updateModel
+                model.headline
+                [ Textfield.Hint "Headline"
+                , Textfield.Value draft.headline
+                ]
+
+        sm =
+            Textfield.updateModel
+                model.summary
+                [ Textfield.Hint "Summary"
+                , Textfield.Value draft.summary
+                ]
+
+        cm =
+            Textfield.updateModel
+                model.content
+                [ Textfield.Hint "Content"
+                , Textfield.Value draft.content
+                ]
+    in
+        { model
+            | state = ArticlePageEditing ArticleEditCreate draft Nothing
+            , headline = hm
+            , summary = sm
+            , content = cm
+        }
+
+
 handleArticleNewResponse : ArticleListState -> String -> Result Http.Error ArticleDraft -> ArticleModel -> ArticleModel
 handleArticleNewResponse listState path result model =
     case result of
         Ok articleData ->
             let
-                hm =
-                    Textfield.updateModel
-                        model.headline
-                        [ Textfield.Hint "Headline"
-                        , Textfield.Value articleData.headline
-                        ]
-
-                sm =
-                    Textfield.updateModel
-                        model.summary
-                        [ Textfield.Hint "Summary"
-                        , Textfield.Value articleData.summary
-                        ]
-
-                cm =
-                    Textfield.updateModel
-                        model.content
-                        [ Textfield.Hint "Content"
-                        , Textfield.Value articleData.content
-                        ]
+                m =
+                    editArticle articleData model
             in
-                { model
-                    | state = ArticlePageEditing ArticleEditCreate articleData Nothing
-                    , edited = True
-                    , headline = hm
-                    , summary = sm
-                    , content = cm
-                }
+                { m | edited = True }
 
         Err err ->
             storeListingActionError listState (AjaxError path err) model
@@ -274,6 +293,56 @@ handleArticleClose auth model =
         )
 
 
+handleArticleVersionSelect : String -> String -> ArticleModel -> ArticleModel
+handleArticleVersionSelect guid ver model =
+    let
+        f =
+            \one ->
+                if one.guid == guid then
+                    case one.data of
+                        CmsArticleViewDataVersions head currentSelected tail ->
+                            let
+                                versions =
+                                    List.concat [ head, [ currentSelected ], tail ]
+
+                                ( h, s, t ) =
+                                    List.foldr
+                                        (\x ( h, s, t ) ->
+                                            if List.length s > 0 then
+                                                ( h, s, x :: t )
+                                            else
+                                                let
+                                                    v =
+                                                        getArticleVersion x
+                                                in
+                                                    if v.version == ver then
+                                                        ( h, x :: s, t )
+                                                    else
+                                                        ( x :: h, s, t )
+                                        )
+                                        ( [], [], [] )
+                                        versions
+                            in
+                                case List.head s of
+                                    Nothing ->
+                                        one
+
+                                    Just selected ->
+                                        { one | data = CmsArticleViewDataVersions h selected t }
+
+                        _ ->
+                            one
+                else
+                    one
+    in
+        case model.articles of
+            Ok resp ->
+                { model | articles = Ok { resp | articles = (List.map f resp.articles) } }
+
+            Err _ ->
+                model
+
+
 update_ : ArticleMsg -> AuthData -> ArticleModel -> ( ArticleModel, Cmd ArticleMsg, Bool )
 update_ msg auth model =
     case msg of
@@ -326,6 +395,12 @@ update_ msg auth model =
         ArticleListLoaded path result ->
             ( handleArticleListLoaded path result model, Cmd.none, False )
 
+        ArticleVersionSelect guid ver ->
+            ( handleArticleVersionSelect guid ver model, Cmd.none, False )
+
+        ArticleOpenDraft draft ->
+            ( editArticle draft model, Cmd.none, False )
+
 
 view : Model -> Html Msg
 view model =
@@ -362,6 +437,192 @@ listingErrStr model actionErr =
             ajaxErrorString err
 
 
+viewCmsArticleSelectOpt : CmsArticleVersion -> Html ArticleMsg
+viewCmsArticleSelectOpt version =
+    let
+        ( optVal, dispVal ) =
+            case version of
+                CmsArticleVersionOnly v ->
+                    ( v.version, v.version )
+
+                CmsArticleVersionEditing v _ ->
+                    ( v.version, v.version ++ " (editing)" )
+
+                CmsArticleVersionPublished v _ ->
+                    ( v.version, v.version ++ " (published)" )
+
+                CmsArticleVersionEditingAndPublished v _ _ ->
+                    ( v.version, v.version ++ " (editing/published)" )
+    in
+        option
+            [ value optVal ]
+            [ text dispVal ]
+
+
+viewCmsArticleSelect : Bool -> String -> List CmsArticleVersion -> Html ArticleMsg
+viewCmsArticleSelect lockUI guid versions =
+    div []
+        [ select
+            [ class "mdc-select"
+            , disabled lockUI
+            , on "change" (Json.map (ArticleVersionSelect guid) targetValue)
+            ]
+            (List.map viewCmsArticleSelectOpt versions)
+        ]
+
+
+viewCmsArticleSelected : CmsArticleVersion -> Html ArticleMsg
+viewCmsArticleSelected cav =
+    let
+        ver =
+            getArticleVersion cav
+    in
+        div []
+            [ p [ class "mdc-typography--title" ] [ text ver.headline ]
+            , p [ class "mdc-typography--subheadline2" ] [ text ver.summary ]
+            ]
+
+
+viewCmsArticleDraft : ArticleDraft -> Html ArticleMsg
+viewCmsArticleDraft draft =
+    div []
+        [ p [ class "mdc-typography--title" ] [ text draft.headline ]
+        , p [ class "mdc-typography--subheadline2" ] [ text draft.summary ]
+        ]
+
+
+showOpenBtn : AuthData -> ArticleDraft -> Bool
+showOpenBtn auth draft =
+    let
+        role =
+            auth.role
+
+        username =
+            auth.username
+
+        lockedBy =
+            draft.lockedBy
+    in
+        ((hasCmsRole role CmsRoleArticleCreate) && (username == lockedBy))
+            || ((hasCmsRole role CmsRoleArticleSubmit) && (username /= lockedBy))
+            || ((hasAnyCmsRole role [ CmsRoleArticleEditSelf, CmsRoleArticleEditOther ]) && (username == lockedBy))
+
+
+viewCmsArticleDraftActions : AuthData -> Bool -> ArticleDraft -> Html ArticleMsg
+viewCmsArticleDraftActions auth lockUI draft =
+    div []
+        (if showOpenBtn auth draft then
+            [ button
+                [ class "mdc-button mdc-button--raised"
+                , disabled lockUI
+                , onClick (ArticleOpenDraft draft)
+                ]
+                [ text "Open" ]
+            ]
+         else
+            []
+        )
+
+
+viewCmsArticleSelectedActions : Bool -> CmsArticleVersion -> Html ArticleMsg
+viewCmsArticleSelectedActions lockUI cav =
+    div []
+        (case cav of
+            CmsArticleVersionOnly v ->
+                [ button
+                    [ class "mdc-button mdc-button--raised"
+                    , disabled lockUI
+                    ]
+                    [ text "Edit" ]
+                , button
+                    [ class "mdc-button mdc-button--raised"
+                    , disabled lockUI
+                    ]
+                    [ text "Publish" ]
+                ]
+
+            CmsArticleVersionEditing v draft ->
+                [ button
+                    [ class "mdc-button mdc-button--raised"
+                    , disabled lockUI
+                    , onClick (ArticleOpenDraft draft)
+                    ]
+                    [ text "Open" ]
+                , button
+                    [ class "mdc-button mdc-button--raised"
+                    , disabled lockUI
+                    ]
+                    [ text "Publish" ]
+                ]
+
+            CmsArticleVersionPublished v published ->
+                [ button
+                    [ class "mdc-button mdc-button--raised"
+                    , disabled lockUI
+                    ]
+                    [ text "Edit" ]
+                , button
+                    [ class "mdc-button mdc-button--raised"
+                    , disabled lockUI
+                    ]
+                    [ text "Unpublish" ]
+                ]
+
+            CmsArticleVersionEditingAndPublished v draft published ->
+                [ button
+                    [ class "mdc-button mdc-button--raised"
+                    , disabled lockUI
+                    , onClick (ArticleOpenDraft draft)
+                    ]
+                    [ text "Open" ]
+                , button
+                    [ class "mdc-button mdc-button--raised"
+                    , disabled lockUI
+                    ]
+                    [ text "Unpublish" ]
+                ]
+        )
+
+
+viewCmsArticle : AuthData -> Bool -> CmsArticleView -> ( String, Html ArticleMsg )
+viewCmsArticle auth lockUI article =
+    ( article.guid
+    , div [ class "mdc-layout-grid__cell--span-3 mdc-elevation--z4" ]
+        [ div [ style [ ( "margin", "1rem" ) ] ]
+            (case article.data of
+                CmsArticleViewDataDraft draft ->
+                    [ div [] [ label [] [ text "DRAFT ARTICLE" ] ]
+                    , viewCmsArticleDraft draft
+                    , viewCmsArticleDraftActions auth lockUI draft
+                    ]
+
+                CmsArticleViewDataVersions head selected tail ->
+                    [ div [] [ viewCmsArticleSelect lockUI article.guid (List.concat [ head, [ selected ], tail ]) ]
+                    , viewCmsArticleSelected selected
+                    , viewCmsArticleSelectedActions lockUI selected
+                    ]
+            )
+        ]
+    )
+
+
+viewCmsArticleList : AuthData -> Bool -> ArticleModel -> Html ArticleMsg
+viewCmsArticleList auth lockUI model =
+    case model.articles of
+        Ok r ->
+            div [ class "mdc-layout-grid" ]
+                [ Html.Keyed.node "div"
+                    [ class "mdc-layout-grid__inner" ]
+                    (List.map
+                        (viewCmsArticle auth lockUI)
+                        r.articles
+                    )
+                ]
+
+        Err _ ->
+            div [] []
+
+
 viewListing : ArticleListState -> Maybe AjaxError -> AuthData -> Bool -> ArticleModel -> Html ArticleMsg
 viewListing listState actionErr auth lockUI model =
     div []
@@ -387,6 +648,7 @@ viewListing listState actionErr auth lockUI model =
                     ]
                 ]
             ]
+        , viewCmsArticleList auth lockUI model
         ]
 
 
@@ -411,8 +673,8 @@ disableSubmit =
     disableDiscard
 
 
-viewCreating : AuthData -> Bool -> ArticleModel -> ArticleDraft -> Maybe AjaxError -> Html ArticleMsg
-viewCreating auth lockUI model article me =
+viewEditing : AuthData -> Bool -> ArticleModel -> ArticleDraft -> Maybe AjaxError -> Html ArticleMsg
+viewEditing auth lockUI model article me =
     div [ style [ ( "padding", "2rem 1rem 2rem 1rem" ) ] ]
         [ div [ style [ ( "color", "red" ) ] ] [ text (editingError me) ]
         , div [] [ label [ class "mdc-typography--title" ] [ text ("Article: " ++ article.id) ] ]
@@ -457,10 +719,14 @@ view_ auth lockUI model =
         ArticlePageEditing mode article err ->
             case mode of
                 ArticleEditCreate ->
-                    viewCreating auth lockUI model article err
+                    viewEditing auth lockUI model article err
 
                 ArticleEditEdit ->
                     div [] [ text "editing" ]
+
+
+
+--HTTP
 
 
 getArticles : String -> Maybe String -> Cmd ArticleMsg

@@ -9,8 +9,6 @@ import Defs
         , AuthData
         , AuthState(..)
         , ArticlePageState(..)
-        , ArticleListState(..)
-        , ArticleEditMode(..)
         , AjaxError
         , ArticleDraft
         , ArticleVersion
@@ -21,6 +19,7 @@ import Defs
         , CmsArticleViewData(..)
         , CmsArticleVersion(..)
         , getArticleVersion
+        , isVersionEditing
         , CmsArticleListResponse
         , CmsArticleListView
         , cmsArticleList2View
@@ -34,6 +33,8 @@ import Task
 import Bitwise
 import Json.Decode as Json
 import Http
+import Date exposing (Date)
+import Date.Extra as DateExtra
 import Html exposing (Html, div, text, button, span, label, select, option, p)
 import Html.Attributes exposing (class, disabled, style, selected, value)
 import Html.Events exposing (onClick, on, targetValue)
@@ -51,13 +52,13 @@ import MDC.Textfield as Textfield
 
 initArticles : CmsArticleListView
 initArticles =
-    CmsArticleListView [] Nothing
+    CmsArticleListView [] Nothing Nothing
 
 
 initModel : ArticleModel
 initModel =
-    { state = ArticlePageListing ArticleListLoading Nothing
-    , articles = Ok initArticles
+    { state = ArticlePageListLoading
+    , articles = initArticles
     , edited = False
     , headline = Textfield.init ArticleHeadline []
     , summary = Textfield.init ArticleSummary []
@@ -73,10 +74,10 @@ init =
 reload : AuthData -> ArticleModel -> ( ArticleModel, Cmd ArticleMsg )
 reload auth model =
     ( { model
-        | state = ArticlePageListing ArticleListLoading Nothing
-        , articles = Ok initArticles
+        | state = ArticlePageListLoading
+        , articles = initArticles
       }
-    , getArticles auth.token Nothing
+    , getArticles auth.token Nothing Nothing
     )
 
 
@@ -97,8 +98,8 @@ logout model =
 
         m1 =
             { m
-                | state = ArticlePageListing ArticleListLoading Nothing
-                , articles = Ok initArticles
+                | state = ArticlePageListLoading
+                , articles = initArticles
             }
     in
         ( { model | article = m1 }
@@ -125,36 +126,35 @@ handleArticleListLoaded path result model =
     case result of
         Ok resp ->
             { model
-                | state = ArticlePageListing ArticleListLoadedSuccess Nothing
-                , articles = Ok (cmsArticleList2View resp)
+                | state = ArticlePageListLoadedSuccess Nothing
+                , articles = cmsArticleList2View resp
                 , edited = False
             }
 
         Err err ->
             { model
-                | state = ArticlePageListing ArticleListLoadedFailure Nothing
-                , articles = Err (AjaxError path err)
+                | state = ArticlePageListLoadedFailure (AjaxError path err)
                 , edited = False
             }
 
 
-storeListingActionError : ArticleListState -> AjaxError -> ArticleModel -> ArticleModel
-storeListingActionError listState err model =
-    { model | state = ArticlePageListing listState (Just err) }
+storeListingActionError : AjaxError -> ArticleModel -> ArticleModel
+storeListingActionError err model =
+    { model | state = ArticlePageListLoadedSuccess (Just err) }
 
 
 clearListingActionError : ArticleModel -> ArticleModel
 clearListingActionError model =
     case model.state of
-        ArticlePageListing listState _ ->
-            { model | state = ArticlePageListing listState Nothing }
+        ArticlePageListLoadedSuccess _ ->
+            { model | state = ArticlePageListLoadedSuccess Nothing }
 
         _ ->
             model
 
 
-editArticle : ArticleDraft -> ArticleModel -> ArticleModel
-editArticle draft model =
+openArticleDraft : ArticleDraft -> ArticleModel -> ArticleModel
+openArticleDraft draft model =
     let
         hm =
             Textfield.updateModel
@@ -178,33 +178,33 @@ editArticle draft model =
                 ]
     in
         { model
-            | state = ArticlePageEditing ArticleEditCreate draft Nothing
+            | state = ArticlePageEditing draft Nothing
             , headline = hm
             , summary = sm
             , content = cm
         }
 
 
-handleArticleNewResponse : ArticleListState -> String -> Result Http.Error ArticleDraft -> ArticleModel -> ArticleModel
-handleArticleNewResponse listState path result model =
+handleArticleNewResponse : String -> Result Http.Error ArticleDraft -> ArticleModel -> ArticleModel
+handleArticleNewResponse path result model =
     case result of
-        Ok articleData ->
+        Ok draft ->
             let
                 m =
-                    editArticle articleData model
+                    openArticleDraft draft model
             in
                 { m | edited = True }
 
         Err err ->
-            storeListingActionError listState (AjaxError path err) model
+            storeListingActionError (AjaxError path err) model
 
 
-handleArticleDiscardResponse : ArticleEditMode -> ArticleDraft -> String -> Result Http.Error String -> ArticleModel -> ( ArticleModel, Cmd ArticleMsg, Bool )
-handleArticleDiscardResponse mode article path result model =
+handleArticleDiscardResponse : ArticleDraft -> String -> Result Http.Error String -> ArticleModel -> ( ArticleModel, Cmd ArticleMsg, Bool )
+handleArticleDiscardResponse article path result model =
     case result of
         Ok _ ->
             ( { model
-                | state = ArticlePageListing ArticleListLoading Nothing
+                | state = ArticlePageListLoading
                 , edited = True
               }
             , Task.perform (always ArticleReload) (Task.succeed True)
@@ -212,7 +212,7 @@ handleArticleDiscardResponse mode article path result model =
             )
 
         Err err ->
-            ( { model | state = ArticlePageEditing mode article (Just (AjaxError path err)) }
+            ( { model | state = ArticlePageEditing article (Just (AjaxError path err)) }
             , Cmd.none
             , False
             )
@@ -227,17 +227,17 @@ populateArticleDraft model article =
     }
 
 
-handleArticleSaveRequest : AuthData -> ArticleEditMode -> ArticleDraft -> ArticleModel -> ( ArticleModel, Cmd ArticleMsg, Bool )
-handleArticleSaveRequest auth mode article model =
-    ( model, saveArticle auth mode (populateArticleDraft model article), True )
+handleArticleSaveRequest : AuthData -> ArticleDraft -> ArticleModel -> ( ArticleModel, Cmd ArticleMsg, Bool )
+handleArticleSaveRequest auth article model =
+    ( model, saveArticle auth (populateArticleDraft model article), True )
 
 
-handleArticleSaveResponse : ArticleEditMode -> ArticleDraft -> String -> Result Http.Error String -> ArticleModel -> ( ArticleModel, Cmd ArticleMsg, Bool )
-handleArticleSaveResponse mode article path result model =
+handleArticleSaveResponse : ArticleDraft -> String -> Result Http.Error String -> ArticleModel -> ( ArticleModel, Cmd ArticleMsg, Bool )
+handleArticleSaveResponse article path result model =
     case result of
         Ok _ ->
             ( { model
-                | state = ArticlePageEditing mode { article | guid = article.id } Nothing
+                | state = ArticlePageEditing { article | guid = article.id } Nothing
                 , edited = True
               }
             , Cmd.none
@@ -245,23 +245,23 @@ handleArticleSaveResponse mode article path result model =
             )
 
         Err err ->
-            ( { model | state = ArticlePageEditing mode article (Just (AjaxError path err)) }
+            ( { model | state = ArticlePageEditing article (Just (AjaxError path err)) }
             , Cmd.none
             , False
             )
 
 
-handleArticleSubmitRequest : AuthData -> ArticleEditMode -> ArticleDraft -> ArticleModel -> ( ArticleModel, Cmd ArticleMsg, Bool )
-handleArticleSubmitRequest auth mode article model =
-    ( model, submitArticle auth mode (populateArticleDraft model article), True )
+handleArticleSubmitRequest : AuthData -> ArticleDraft -> ArticleModel -> ( ArticleModel, Cmd ArticleMsg, Bool )
+handleArticleSubmitRequest auth article model =
+    ( model, submitArticle auth (populateArticleDraft model article), True )
 
 
-handleArticleSubmitResponse : ArticleEditMode -> ArticleDraft -> String -> Result Http.Error String -> ArticleModel -> ( ArticleModel, Cmd ArticleMsg, Bool )
-handleArticleSubmitResponse mode article path result model =
+handleArticleSubmitResponse : ArticleDraft -> String -> Result Http.Error String -> ArticleModel -> ( ArticleModel, Cmd ArticleMsg, Bool )
+handleArticleSubmitResponse article path result model =
     case result of
         Ok _ ->
             ( { model
-                | state = ArticlePageListing ArticleListLoading Nothing
+                | state = ArticlePageListLoading
                 , edited = True
               }
             , Task.perform (always ArticleReload) (Task.succeed True)
@@ -269,7 +269,7 @@ handleArticleSubmitResponse mode article path result model =
             )
 
         Err err ->
-            ( { model | state = ArticlePageEditing mode article (Just (AjaxError path err)) }
+            ( { model | state = ArticlePageEditing article (Just (AjaxError path err)) }
             , Cmd.none
             , False
             )
@@ -285,7 +285,7 @@ handleArticleClose auth model =
             ( m, c, True )
     else
         ( { model
-            | state = ArticlePageListing ArticleListLoadedSuccess Nothing
+            | state = ArticlePageListLoadedSuccess Nothing
             , edited = False
           }
         , Cmd.none
@@ -309,7 +309,7 @@ handleArticleVersionSelect guid ver model =
                                     List.foldr
                                         (\x ( h, s, t ) ->
                                             if List.length s > 0 then
-                                                ( h, s, x :: t )
+                                                ( x :: h, s, t )
                                             else
                                                 let
                                                     v =
@@ -318,7 +318,7 @@ handleArticleVersionSelect guid ver model =
                                                     if v.version == ver then
                                                         ( h, x :: s, t )
                                                     else
-                                                        ( x :: h, s, t )
+                                                        ( h, s, x :: t )
                                         )
                                         ( [], [], [] )
                                         versions
@@ -327,20 +327,78 @@ handleArticleVersionSelect guid ver model =
                                     Nothing ->
                                         one
 
-                                    Just selected ->
-                                        { one | data = CmsArticleViewDataVersions h selected t }
+                                    Just selectedArticle ->
+                                        { one | data = CmsArticleViewDataVersions h selectedArticle t }
 
                         _ ->
                             one
                 else
                     one
-    in
-        case model.articles of
-            Ok resp ->
-                { model | articles = Ok { resp | articles = (List.map f resp.articles) } }
 
-            Err _ ->
-                model
+        articleListView =
+            model.articles
+    in
+        { model | articles = { articleListView | articles = (List.map f articleListView.articles) } }
+
+
+handleArticleEditResponse : String -> Result Http.Error ArticleDraft -> ArticleModel -> ( ArticleModel, Cmd ArticleMsg, Bool )
+handleArticleEditResponse path result model =
+    case result of
+        Ok draft ->
+            ( openArticleDraft draft { model | edited = True }
+            , Cmd.none
+            , False
+            )
+
+        Err err ->
+            ( { model | state = ArticlePageListLoadedSuccess (Just (AjaxError path err)) }
+            , Cmd.none
+            , False
+            )
+
+
+handleArticlePublishResponse : String -> Result Http.Error String -> ArticleModel -> ( ArticleModel, Cmd ArticleMsg, Bool )
+handleArticlePublishResponse path result model =
+    case result of
+        Ok _ ->
+            ( { model
+                | state = ArticlePageListLoading
+                , edited = True
+              }
+            , Task.perform (always ArticleReload) (Task.succeed True)
+            , True
+            )
+
+        Err err ->
+            ( { model
+                | state = ArticlePageListLoadedSuccess (Just (AjaxError path err))
+                , edited = False
+              }
+            , Cmd.none
+            , False
+            )
+
+
+handleArticleUnpublishResponse : String -> Result Http.Error String -> ArticleModel -> ( ArticleModel, Cmd ArticleMsg, Bool )
+handleArticleUnpublishResponse path result model =
+    case result of
+        Ok _ ->
+            ( { model
+                | state = ArticlePageListLoading
+                , edited = True
+              }
+            , Task.perform (always ArticleReload) (Task.succeed True)
+            , True
+            )
+
+        Err err ->
+            ( { model
+                | state = ArticlePageListLoadedSuccess (Just (AjaxError path err))
+                , edited = False
+              }
+            , Cmd.none
+            , False
+            )
 
 
 update_ : ArticleMsg -> AuthData -> ArticleModel -> ( ArticleModel, Cmd ArticleMsg, Bool )
@@ -358,29 +416,29 @@ update_ msg auth model =
         ArticleContent tfm ->
             ( { model | content = Textfield.update tfm model.content }, Cmd.none, False )
 
-        ArticleNewRequest listState ->
-            ( model, createArticle listState auth, True )
+        ArticleNewRequest ->
+            ( model, createArticle auth, True )
 
-        ArticleNewResponse listState path result ->
-            ( handleArticleNewResponse listState path result model, Cmd.none, False )
+        ArticleNewResponse path result ->
+            ( handleArticleNewResponse path result model, Cmd.none, False )
 
-        ArticleDiscardRequest auth mode article ->
-            ( model, discardArticle auth mode article, True )
+        ArticleDiscardRequest article ->
+            ( model, discardArticle auth article, True )
 
-        ArticleDiscardResponse mode article path result ->
-            handleArticleDiscardResponse mode article path result model
+        ArticleDiscardResponse article path result ->
+            handleArticleDiscardResponse article path result model
 
-        ArticleSaveRequest auth mode article ->
-            handleArticleSaveRequest auth mode article model
+        ArticleSaveRequest article ->
+            handleArticleSaveRequest auth article model
 
-        ArticleSaveResponse mode article path result ->
-            handleArticleSaveResponse mode article path result model
+        ArticleSaveResponse article path result ->
+            handleArticleSaveResponse article path result model
 
-        ArticleSubmitRequest auth mode article ->
-            handleArticleSubmitRequest auth mode article model
+        ArticleSubmitRequest article ->
+            handleArticleSubmitRequest auth article model
 
-        ArticleSubmitResponse mode article path result ->
-            handleArticleSubmitResponse mode article path result model
+        ArticleSubmitResponse article path result ->
+            handleArticleSubmitResponse article path result model
 
         ArticleClose ->
             handleArticleClose auth model
@@ -399,7 +457,25 @@ update_ msg auth model =
             ( handleArticleVersionSelect guid ver model, Cmd.none, False )
 
         ArticleOpenDraft draft ->
-            ( editArticle draft model, Cmd.none, False )
+            ( openArticleDraft draft model, Cmd.none, False )
+
+        ArticleEditRequest ver ->
+            ( model, editArticle auth ver, True )
+
+        ArticleEditResponse path result ->
+            handleArticleEditResponse path result model
+
+        ArticlePublishRequest ver ->
+            ( model, publishArticle auth ver, True )
+
+        ArticlePublishResponse path result ->
+            handleArticlePublishResponse path result model
+
+        ArticleUnpublishRequest ver ->
+            ( model, unpublishArticle auth ver, True )
+
+        ArticleUnpublishResponse path result ->
+            handleArticleUnpublishResponse path result model
 
 
 view : Model -> Html Msg
@@ -412,33 +488,44 @@ view model =
             div [] []
 
 
-disableNew : AuthData -> Bool -> ArticleListState -> Bool
-disableNew auth lockUI listState =
-    not (hasCmsRole auth.role CmsRoleArticleCreate) || lockUI || (listState /= ArticleListLoadedSuccess)
+disableNew : AuthData -> Bool -> ArticleModel -> Bool
+disableNew auth lockUI model =
+    lockUI
+        || (not (hasCmsRole auth.role CmsRoleArticleCreate))
+        || (case model.state of
+                ArticlePageListLoadedSuccess _ ->
+                    False
+
+                _ ->
+                    True
+           )
 
 
-disableReload : Bool -> ArticleListState -> Bool
-disableReload lockUI listState =
-    lockUI || (listState == ArticleListLoading)
+disableReload : Bool -> ArticleModel -> Bool
+disableReload lockUI model =
+    lockUI || (model.state == ArticlePageListLoading)
 
 
 listingErrStr : ArticleModel -> Maybe AjaxError -> String
 listingErrStr model actionErr =
-    case model.articles of
-        Ok _ ->
-            case actionErr of
-                Nothing ->
-                    ""
+    case model.state of
+        ArticlePageListLoadedFailure err ->
+            ajaxErrorString err
 
+        ArticlePageListLoadedSuccess actionErr ->
+            case actionErr of
                 Just err ->
                     ajaxErrorString err
 
-        Err err ->
-            ajaxErrorString err
+                Nothing ->
+                    ""
+
+        _ ->
+            ""
 
 
-viewCmsArticleSelectOpt : CmsArticleVersion -> Html ArticleMsg
-viewCmsArticleSelectOpt version =
+viewCmsArticleSelectOpt : ArticleVersion -> CmsArticleVersion -> ( String, Html ArticleMsg )
+viewCmsArticleSelectOpt selectedArticle version =
     let
         ( optVal, dispVal ) =
             case version of
@@ -454,20 +541,25 @@ viewCmsArticleSelectOpt version =
                 CmsArticleVersionEditingAndPublished v _ _ ->
                     ( v.version, v.version ++ " (editing/published)" )
     in
-        option
-            [ value optVal ]
+        ( optVal
+        , option
+            [ value optVal
+            , selected (optVal == selectedArticle.version)
+            ]
             [ text dispVal ]
+        )
 
 
-viewCmsArticleSelect : Bool -> String -> List CmsArticleVersion -> Html ArticleMsg
-viewCmsArticleSelect lockUI guid versions =
+viewCmsArticleSelect : Bool -> ArticleVersion -> String -> List CmsArticleVersion -> Html ArticleMsg
+viewCmsArticleSelect lockUI selectedArticle guid versions =
     div []
-        [ select
+        [ Html.Keyed.node
+            "select"
             [ class "mdc-select"
             , disabled lockUI
             , on "change" (Json.map (ArticleVersionSelect guid) targetValue)
             ]
-            (List.map viewCmsArticleSelectOpt versions)
+            (List.map (viewCmsArticleSelectOpt selectedArticle) versions)
         ]
 
 
@@ -508,78 +600,106 @@ showOpenBtn auth draft =
             || ((hasAnyCmsRole role [ CmsRoleArticleEditSelf, CmsRoleArticleEditOther ]) && (username == lockedBy))
 
 
-viewCmsArticleDraftActions : AuthData -> Bool -> ArticleDraft -> Html ArticleMsg
-viewCmsArticleDraftActions auth lockUI draft =
-    div []
-        (if showOpenBtn auth draft then
-            [ button
-                [ class "mdc-button mdc-button--raised"
-                , disabled lockUI
-                , onClick (ArticleOpenDraft draft)
-                ]
-                [ text "Open" ]
+showEditBtn : AuthData -> ArticleVersion -> Bool
+showEditBtn auth ver =
+    let
+        role =
+            auth.role
+
+        username =
+            auth.username
+
+        revisedBy =
+            ver.revisedBy
+    in
+        ((hasCmsRole role CmsRoleArticleEditSelf) && (username == revisedBy))
+            || ((hasCmsRole role CmsRoleArticleEditOther) && (username /= revisedBy))
+
+
+showPublishBtn : AuthData -> Bool
+showPublishBtn auth =
+    hasCmsRole auth.role CmsRoleArticlePublish
+
+
+openBtn : AuthData -> Bool -> ArticleDraft -> Html ArticleMsg
+openBtn auth lockUI draft =
+    if showOpenBtn auth draft then
+        button
+            [ class "mdc-button mdc-button--raised"
+            , disabled lockUI
+            , onClick (ArticleOpenDraft draft)
             ]
-         else
-            []
-        )
+            [ text "Open" ]
+    else
+        div [] []
 
 
-viewCmsArticleSelectedActions : Bool -> CmsArticleVersion -> Html ArticleMsg
-viewCmsArticleSelectedActions lockUI cav =
-    div []
+editBtn : AuthData -> Bool -> ArticleVersion -> Bool -> Html ArticleMsg
+editBtn auth lockUI ver editing =
+    if (not editing) && (showEditBtn auth ver) then
+        button
+            [ class "mdc-button mdc-button--raised"
+            , disabled lockUI
+            , onClick (ArticleEditRequest ver)
+            ]
+            [ text "Edit" ]
+    else
+        div [] []
+
+
+publishBtn : AuthData -> Bool -> ArticleVersion -> Html ArticleMsg
+publishBtn auth lockUI ver =
+    if showPublishBtn auth then
+        button
+            [ class "mdc-button mdc-button--raised"
+            , disabled lockUI
+            , onClick (ArticlePublishRequest ver)
+            ]
+            [ text "Publish" ]
+    else
+        div [] []
+
+
+unpublishBtn : AuthData -> Bool -> ArticleVersion -> Html ArticleMsg
+unpublishBtn auth lockUI ver =
+    if showPublishBtn auth then
+        button
+            [ class "mdc-button mdc-button--raised"
+            , disabled lockUI
+            , onClick (ArticleUnpublishRequest ver)
+            ]
+            [ text "Unpublish" ]
+    else
+        div [] []
+
+
+viewCmsArticleSelectedActions : AuthData -> Bool -> CmsArticleVersion -> Bool -> Html ArticleMsg
+viewCmsArticleSelectedActions auth lockUI cav editing =
+    div
+        [ style
+            [ ( "display", "flex" )
+            , ( "justify-content", "space-between" )
+            ]
+        ]
         (case cav of
             CmsArticleVersionOnly v ->
-                [ button
-                    [ class "mdc-button mdc-button--raised"
-                    , disabled lockUI
-                    ]
-                    [ text "Edit" ]
-                , button
-                    [ class "mdc-button mdc-button--raised"
-                    , disabled lockUI
-                    ]
-                    [ text "Publish" ]
+                [ editBtn auth lockUI v editing
+                , publishBtn auth lockUI v
                 ]
 
             CmsArticleVersionEditing v draft ->
-                [ button
-                    [ class "mdc-button mdc-button--raised"
-                    , disabled lockUI
-                    , onClick (ArticleOpenDraft draft)
-                    ]
-                    [ text "Open" ]
-                , button
-                    [ class "mdc-button mdc-button--raised"
-                    , disabled lockUI
-                    ]
-                    [ text "Publish" ]
+                [ openBtn auth lockUI draft
+                , publishBtn auth lockUI v
                 ]
 
             CmsArticleVersionPublished v published ->
-                [ button
-                    [ class "mdc-button mdc-button--raised"
-                    , disabled lockUI
-                    ]
-                    [ text "Edit" ]
-                , button
-                    [ class "mdc-button mdc-button--raised"
-                    , disabled lockUI
-                    ]
-                    [ text "Unpublish" ]
+                [ editBtn auth lockUI v editing
+                , unpublishBtn auth lockUI published
                 ]
 
             CmsArticleVersionEditingAndPublished v draft published ->
-                [ button
-                    [ class "mdc-button mdc-button--raised"
-                    , disabled lockUI
-                    , onClick (ArticleOpenDraft draft)
-                    ]
-                    [ text "Open" ]
-                , button
-                    [ class "mdc-button mdc-button--raised"
-                    , disabled lockUI
-                    ]
-                    [ text "Unpublish" ]
+                [ openBtn auth lockUI draft
+                , unpublishBtn auth lockUI published
                 ]
         )
 
@@ -591,16 +711,30 @@ viewCmsArticle auth lockUI article =
         [ div [ style [ ( "margin", "1rem" ) ] ]
             (case article.data of
                 CmsArticleViewDataDraft draft ->
-                    [ div [] [ label [] [ text "DRAFT ARTICLE" ] ]
+                    [ select
+                        [ class "mdc-select"
+                        , disabled True
+                        ]
+                        [ option [ selected True ] [ text "DRAFT ARTICLE" ] ]
                     , viewCmsArticleDraft draft
-                    , viewCmsArticleDraftActions auth lockUI draft
+                    , openBtn auth lockUI draft
                     ]
 
-                CmsArticleViewDataVersions head selected tail ->
-                    [ div [] [ viewCmsArticleSelect lockUI article.guid (List.concat [ head, [ selected ], tail ]) ]
-                    , viewCmsArticleSelected selected
-                    , viewCmsArticleSelectedActions lockUI selected
-                    ]
+                CmsArticleViewDataVersions head selectedArticle tail ->
+                    let
+                        av =
+                            getArticleVersion selectedArticle
+
+                        versions =
+                            (List.concat [ head, [ selectedArticle ], tail ])
+
+                        editing =
+                            (List.any isVersionEditing versions)
+                    in
+                        [ viewCmsArticleSelect lockUI av article.guid versions
+                        , viewCmsArticleSelected selectedArticle
+                        , viewCmsArticleSelectedActions auth lockUI selectedArticle editing
+                        ]
             )
         ]
     )
@@ -608,47 +742,75 @@ viewCmsArticle auth lockUI article =
 
 viewCmsArticleList : AuthData -> Bool -> ArticleModel -> Html ArticleMsg
 viewCmsArticleList auth lockUI model =
-    case model.articles of
-        Ok r ->
-            div [ class "mdc-layout-grid" ]
-                [ Html.Keyed.node "div"
-                    [ class "mdc-layout-grid__inner" ]
-                    (List.map
-                        (viewCmsArticle auth lockUI)
-                        r.articles
-                    )
-                ]
+    div [ class "mdc-layout-grid" ]
+        [ Html.Keyed.node "div"
+            [ class "mdc-layout-grid__inner" ]
+            (List.map
+                (viewCmsArticle auth lockUI)
+                model.articles.articles
+            )
+        ]
 
-        Err _ ->
+
+viewListActions : AuthData -> Bool -> ArticleModel -> Html ArticleMsg
+viewListActions auth lockUI model =
+    div [ class "mdc-layout-grid" ]
+        [ div [ class "mdc-layout-grid__inner" ]
+            [ div [ class "mdc-layout-grid__cell mdc-layout-grid--align-left" ]
+                [ button
+                    [ class "mdc-button mdc-button--raised"
+                    , disabled (disableNew auth lockUI model)
+                    , onClick ArticleNewRequest
+                    ]
+                    [ text "New" ]
+                ]
+            , div [ class "mdc-layout-grid__cell" ] []
+            , div [ class "mdc-layout-grid__cell mdc-layout-grid--align-right" ]
+                [ button
+                    [ class "mdc-button mdc-button--raised"
+                    , disabled (disableReload lockUI model)
+                    , onClick ArticleReload
+                    ]
+                    [ text "Reload" ]
+                ]
+            ]
+        ]
+
+
+viewLoadMore_ : AuthData -> Bool -> ArticleModel -> Html ArticleMsg
+viewLoadMore_ auth lockUI model =
+    div [ class "mdc-layout-grid" ]
+        [ div [ class "mdc-layout-grid__inner" ]
+            [ div [ class "mdc-layout-grid__cell--span-12 mdc-layout-grid--align-left" ]
+                [ button
+                    [ class "mdc-button mdc-button--raised"
+                    ]
+                    [ text "More" ]
+                ]
+            ]
+        ]
+
+
+viewLoadMore : AuthData -> Bool -> ArticleModel -> Html ArticleMsg
+viewLoadMore auth lockUI model =
+    case model.state of
+        ArticlePageListLoadedSuccess _ ->
+            if model.articles.cursorMark /= Nothing then
+                viewLoadMore_ auth lockUI model
+            else
+                div [] []
+
+        _ ->
             div [] []
 
 
-viewListing : ArticleListState -> Maybe AjaxError -> AuthData -> Bool -> ArticleModel -> Html ArticleMsg
-viewListing listState actionErr auth lockUI model =
+viewListing : Maybe AjaxError -> AuthData -> Bool -> ArticleModel -> Html ArticleMsg
+viewListing actionErr auth lockUI model =
     div []
         [ div [ style [ ( "color", "red" ) ] ] [ text (listingErrStr model actionErr) ]
-        , div [ class "mdc-layout-grid" ]
-            [ div [ class "mdc-layout-grid__inner" ]
-                [ div [ class "mdc-layout-grid__cell mdc-layout-grid--align-left" ]
-                    [ button
-                        [ class "mdc-button mdc-button--raised"
-                        , disabled (disableNew auth lockUI listState)
-                        , onClick (ArticleNewRequest listState)
-                        ]
-                        [ text "New" ]
-                    ]
-                , div [ class "mdc-layout-grid__cell" ] []
-                , div [ class "mdc-layout-grid__cell mdc-layout-grid--align-right" ]
-                    [ button
-                        [ class "mdc-button mdc-button--raised"
-                        , disabled (disableReload lockUI listState)
-                        , onClick ArticleReload
-                        ]
-                        [ text "Reload" ]
-                    ]
-                ]
-            ]
+        , viewListActions auth lockUI model
         , viewCmsArticleList auth lockUI model
+        , viewLoadMore auth lockUI model
         ]
 
 
@@ -691,19 +853,19 @@ viewEditing auth lockUI model article me =
             , button
                 [ class "mdc-button mdc-button--raised"
                 , disabled (disableDiscard lockUI auth article)
-                , onClick (ArticleDiscardRequest auth ArticleEditCreate article)
+                , onClick (ArticleDiscardRequest article)
                 ]
                 [ text "Discard" ]
             , button
                 [ class "mdc-button mdc-button--raised"
                 , disabled (lockUI || auth.username /= article.lockedBy)
-                , onClick (ArticleSaveRequest auth ArticleEditCreate article)
+                , onClick (ArticleSaveRequest article)
                 ]
                 [ text "Save" ]
             , button
                 [ class "mdc-button mdc-button--raised"
                 , disabled (disableSubmit lockUI auth article)
-                , onClick (ArticleSubmitRequest auth ArticleEditCreate article)
+                , onClick (ArticleSubmitRequest article)
                 ]
                 [ text "Submit" ]
             ]
@@ -713,47 +875,63 @@ viewEditing auth lockUI model article me =
 view_ : AuthData -> Bool -> ArticleModel -> Html ArticleMsg
 view_ auth lockUI model =
     case model.state of
-        ArticlePageListing listState actionErr ->
-            viewListing listState actionErr auth lockUI model
+        ArticlePageListLoading ->
+            viewListing Nothing auth lockUI model
 
-        ArticlePageEditing mode article err ->
-            case mode of
-                ArticleEditCreate ->
-                    viewEditing auth lockUI model article err
+        ArticlePageListLoadedSuccess actionErr ->
+            viewListing actionErr auth lockUI model
 
-                ArticleEditEdit ->
-                    div [] [ text "editing" ]
+        ArticlePageListLoadedFailure err ->
+            viewListing (Just err) auth lockUI model
+
+        ArticlePageEditing article err ->
+            viewEditing auth lockUI model article err
 
 
 
 --HTTP
 
 
-getArticles : String -> Maybe String -> Cmd ArticleMsg
-getArticles token cursorMark =
+formatDate : Date -> String
+formatDate d =
+    DateExtra.toUtcFormattedString "yyyy-MM-ddTHH:mm:ss.SSSZ" d
+
+
+getArticles : String -> Maybe String -> Maybe Date -> Cmd ArticleMsg
+getArticles token cursorMark createdAt =
     let
         path =
             case cursorMark of
                 Nothing ->
-                    "/api/articles"
+                    case createdAt of
+                        Nothing ->
+                            "/api/articles"
+
+                        Just d ->
+                            "/api/articles?before=" ++ (formatDate d)
 
                 Just cm ->
-                    "/api/articles?cursorMark=" ++ cm
+                    case createdAt of
+                        Nothing ->
+                            "/api/articles?cursorMark=" ++ cm
+
+                        Just d ->
+                            "/api/articles?cursorMark=" ++ cm ++ "&before=" ++ (formatDate d)
     in
         httpGetJson path token decodeCmsArticleListResponse (ArticleListLoaded path)
 
 
-createArticle : ArticleListState -> AuthData -> Cmd ArticleMsg
-createArticle listState auth =
+createArticle : AuthData -> Cmd ArticleMsg
+createArticle auth =
     let
         path =
             "/api/article/create?username=" ++ auth.username
     in
-        httpGetJson path auth.token decodeArticleDraft (ArticleNewResponse listState path)
+        httpGetJson path auth.token decodeArticleDraft (ArticleNewResponse path)
 
 
-discardArticle : AuthData -> ArticleEditMode -> ArticleDraft -> Cmd ArticleMsg
-discardArticle auth mode article =
+discardArticle : AuthData -> ArticleDraft -> Cmd ArticleMsg
+discardArticle auth article =
     let
         path =
             if auth.username == article.lockedBy then
@@ -761,20 +939,20 @@ discardArticle auth mode article =
             else
                 "/api/article/discard-other?id=" ++ article.id
     in
-        httpGetString path auth.token (ArticleDiscardResponse mode article path)
+        httpGetString path auth.token (ArticleDiscardResponse article path)
 
 
-saveArticle : AuthData -> ArticleEditMode -> ArticleDraft -> Cmd ArticleMsg
-saveArticle auth mode article =
+saveArticle : AuthData -> ArticleDraft -> Cmd ArticleMsg
+saveArticle auth article =
     let
         path =
             "/api/article/save?id=" ++ article.id
     in
-        httpPostJson path auth.token (encodeArticleDraft article) (ArticleSaveResponse mode article path)
+        httpPostJson path auth.token (encodeArticleDraft article) (ArticleSaveResponse article path)
 
 
-submitArticle : AuthData -> ArticleEditMode -> ArticleDraft -> Cmd ArticleMsg
-submitArticle auth mode article =
+submitArticle : AuthData -> ArticleDraft -> Cmd ArticleMsg
+submitArticle auth article =
     let
         path =
             if auth.username == article.lockedBy then
@@ -782,4 +960,31 @@ submitArticle auth mode article =
             else
                 "/api/article/submit-other?id=" ++ article.id
     in
-        httpPostJson path auth.token (encodeArticleDraft article) (ArticleSubmitResponse mode article path)
+        httpPostJson path auth.token (encodeArticleDraft article) (ArticleSubmitResponse article path)
+
+
+editArticle : AuthData -> ArticleVersion -> Cmd ArticleMsg
+editArticle auth article =
+    let
+        path =
+            "/api/article/edit?id=" ++ article.id
+    in
+        httpGetJson path auth.token decodeArticleDraft (ArticleEditResponse path)
+
+
+publishArticle : AuthData -> ArticleVersion -> Cmd ArticleMsg
+publishArticle auth article =
+    let
+        path =
+            "/api/article/publish?id=" ++ article.id
+    in
+        httpGetString path auth.token (ArticlePublishResponse path)
+
+
+unpublishArticle : AuthData -> ArticleVersion -> Cmd ArticleMsg
+unpublishArticle auth article =
+    let
+        path =
+            "/api/article/unpublish?id=" ++ article.id
+    in
+        httpGetString path auth.token (ArticleUnpublishResponse path)

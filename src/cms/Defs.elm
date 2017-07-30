@@ -226,6 +226,19 @@ getArticleVersion a =
             v
 
 
+isVersionEditing : CmsArticleVersion -> Bool
+isVersionEditing ver =
+    case ver of
+        CmsArticleVersionEditing _ _ ->
+            True
+
+        CmsArticleVersionEditingAndPublished _ _ _ ->
+            True
+
+        _ ->
+            False
+
+
 type CmsArticleViewData
     = CmsArticleViewDataDraft ArticleDraft
     | CmsArticleViewDataVersions (List CmsArticleVersion) CmsArticleVersion (List CmsArticleVersion)
@@ -261,15 +274,28 @@ cmsArticle2ViewData article =
                                             CmsArticleVersionOnly v
 
                                         Just publish ->
-                                            CmsArticleVersionPublished v publish
+                                            if v.version == publish.version then
+                                                CmsArticleVersionPublished v publish
+                                            else
+                                                CmsArticleVersionOnly v
 
                                 Just draft ->
                                     case article.publish of
                                         Nothing ->
-                                            CmsArticleVersionEditing v draft
+                                            if v.version == draft.fromVersion then
+                                                CmsArticleVersionEditing v draft
+                                            else
+                                                CmsArticleVersionOnly v
 
                                         Just publish ->
-                                            CmsArticleVersionEditingAndPublished v draft publish
+                                            if (v.version == draft.fromVersion) && (v.version == publish.version) then
+                                                CmsArticleVersionEditingAndPublished v draft publish
+                                            else if (v.version == draft.fromVersion) && (v.version /= publish.version) then
+                                                CmsArticleVersionEditing v draft
+                                            else if (v.version /= draft.fromVersion) && (v.version == publish.version) then
+                                                CmsArticleVersionPublished v publish
+                                            else
+                                                CmsArticleVersionOnly v
                         )
                         versions
 
@@ -314,13 +340,14 @@ decodeCmsArticleListResponse =
 type alias CmsArticleListView =
     { articles : List CmsArticleView
     , cursorMark : Maybe String
+    , oldestCreatedAt : Maybe Date
     }
 
 
 cmsArticleList2View : CmsArticleListResponse -> CmsArticleListView
 cmsArticleList2View resp =
-    { resp
-        | articles =
+    let
+        articles =
             List.filterMap
                 (\x ->
                     let
@@ -339,28 +366,34 @@ cmsArticleList2View resp =
                                     }
                 )
                 resp.articles
-    }
 
+        oldest =
+            List.head (List.reverse resp.articles)
 
-type ArticleListState
-    = ArticleListLoading
-    | ArticleListLoadedSuccess
-    | ArticleListLoadedFailure
+        oldestCreatedAt =
+            case oldest of
+                Nothing ->
+                    Nothing
 
-
-type ArticleEditMode
-    = ArticleEditCreate
-    | ArticleEditEdit
+                Just a ->
+                    Just a.createdAt
+    in
+        { articles = articles
+        , oldestCreatedAt = oldestCreatedAt
+        , cursorMark = resp.cursorMark
+        }
 
 
 type ArticlePageState
-    = ArticlePageListing ArticleListState (Maybe AjaxError)
-    | ArticlePageEditing ArticleEditMode ArticleDraft (Maybe AjaxError)
+    = ArticlePageListLoading
+    | ArticlePageListLoadedSuccess (Maybe AjaxError)
+    | ArticlePageListLoadedFailure AjaxError
+    | ArticlePageEditing ArticleDraft (Maybe AjaxError)
 
 
 type alias ArticleModel =
     { state : ArticlePageState
-    , articles : Result AjaxError CmsArticleListView
+    , articles : CmsArticleListView
     , edited : Bool
     , headline : Textfield.Model ArticleMsg
     , summary : Textfield.Model ArticleMsg
@@ -403,19 +436,25 @@ type ArticleMsg
     = ArticleHeadline (Textfield.Msg ArticleMsg)
     | ArticleSummary (Textfield.Msg ArticleMsg)
     | ArticleContent (Textfield.Msg ArticleMsg)
-    | ArticleNewRequest ArticleListState
-    | ArticleNewResponse ArticleListState String (Result Http.Error ArticleDraft)
-    | ArticleDiscardRequest AuthData ArticleEditMode ArticleDraft
-    | ArticleDiscardResponse ArticleEditMode ArticleDraft String (Result Http.Error String)
-    | ArticleSaveRequest AuthData ArticleEditMode ArticleDraft
-    | ArticleSaveResponse ArticleEditMode ArticleDraft String (Result Http.Error String)
-    | ArticleSubmitRequest AuthData ArticleEditMode ArticleDraft
-    | ArticleSubmitResponse ArticleEditMode ArticleDraft String (Result Http.Error String)
+    | ArticleNewRequest
+    | ArticleNewResponse String (Result Http.Error ArticleDraft)
+    | ArticleDiscardRequest ArticleDraft
+    | ArticleDiscardResponse ArticleDraft String (Result Http.Error String)
+    | ArticleSaveRequest ArticleDraft
+    | ArticleSaveResponse ArticleDraft String (Result Http.Error String)
+    | ArticleSubmitRequest ArticleDraft
+    | ArticleSubmitResponse ArticleDraft String (Result Http.Error String)
     | ArticleClose
     | ArticleReload
     | ArticleListLoaded String (Result Http.Error CmsArticleListResponse)
     | ArticleVersionSelect String String
     | ArticleOpenDraft ArticleDraft
+    | ArticleEditRequest ArticleVersion
+    | ArticleEditResponse String (Result Http.Error ArticleDraft)
+    | ArticlePublishRequest ArticleVersion
+    | ArticlePublishResponse String (Result Http.Error String)
+    | ArticleUnpublishRequest ArticleVersion
+    | ArticleUnpublishResponse String (Result Http.Error String)
     | ArticleNoop
 
 

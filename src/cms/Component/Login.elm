@@ -93,6 +93,25 @@ checkIdleTimeout now model =
             model ! []
 
 
+refreshToken : Time.Time -> LoginModel -> ( LoginModel, Cmd LoginMsg )
+refreshToken now model =
+    case model.auth of
+        AuthSuccess data ->
+            if (data.expire - now) < (Time.minute * 3) then
+                model
+                    ! [ getAuthData
+                            model.loginPath
+                            model.username.value
+                            model.password.value
+                            LoginAutoRefreshTokenResponse
+                      ]
+            else
+                model ! []
+
+        _ ->
+            model ! []
+
+
 authError : Http.Error -> String -> String -> AuthError
 authError err username password =
     case err of
@@ -228,11 +247,11 @@ handleLoginRequest model source =
             cmds =
                 case source of
                     Nothing ->
-                        [ getAuthData model.loginPath model.username.value model.password.value ]
+                        [ getAuthData model.loginPath model.username.value model.password.value LoginResponse ]
 
                     Just id ->
                         [ Task.attempt ignore (Dom.blur id)
-                        , getAuthData model.loginPath model.username.value model.password.value
+                        , getAuthData model.loginPath model.username.value model.password.value LoginResponse
                         ]
         in
             (debug "login-request" { model | auth = AuthInProgress }) ! cmds
@@ -284,6 +303,19 @@ update_ msg model =
 
         LoginCheckIdleTimeout time ->
             checkIdleTimeout time model
+
+        LoginAutoRefreshTokenJob time ->
+            refreshToken time model
+
+        LoginAutoRefreshTokenResponse (Ok authdata) ->
+            debug "refresh-token-ok" { model | auth = AuthSuccess authdata } ! []
+
+        LoginAutoRefreshTokenResponse (Err err) ->
+            let
+                x =
+                    debug "auto-refresh-token-error" (httpErrorString model.loginPath err)
+            in
+                model ! []
 
         LoginLogout ->
             init_ model.loginPath model.title model.maxIdleTime
@@ -438,6 +470,7 @@ subscriptions_ model =
                 [ Mouse.clicks (\_ -> LoginUserActivity)
                 , Keyboard.presses (\_ -> LoginUserActivity)
                 , Time.every Time.minute LoginCheckIdleTimeout
+                , Time.every (Time.second * 15) LoginAutoRefreshTokenJob
                 ]
 
         _ ->
@@ -448,10 +481,10 @@ subscriptions_ model =
 -- HTTP
 
 
-getAuthData : String -> String -> String -> Cmd LoginMsg
-getAuthData path username password =
+getAuthData : String -> String -> String -> (Result Http.Error AuthData -> LoginMsg) -> Cmd LoginMsg
+getAuthData path username password msg =
     let
         url =
             path ++ "?username=" ++ username ++ "&password=" ++ password
     in
-        Http.send LoginResponse (Http.get url (Defs.decodeAuthData username))
+        Http.send msg (Http.get url (Defs.decodeAuthData username))

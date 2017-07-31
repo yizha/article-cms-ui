@@ -416,6 +416,8 @@ type LoginMsg
     | LoginUserActivity
     | LoginLogUserActivity Time.Time
     | LoginCheckIdleTimeout Time.Time
+    | LoginAutoRefreshTokenJob Time.Time
+    | LoginAutoRefreshTokenResponse (Result Http.Error AuthData)
     | LoginLogout
     | LoginNoop
 

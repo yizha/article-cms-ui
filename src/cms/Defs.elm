@@ -327,20 +327,22 @@ cmsArticle2ViewData article =
 type alias CmsArticleListResponse =
     { articles : List CmsArticle
     , cursorMark : Maybe String
+    , before : Date
     }
 
 
 decodeCmsArticleListResponse : Json.Decoder CmsArticleListResponse
 decodeCmsArticleListResponse =
-    Json.map2 CmsArticleListResponse
+    Json.map3 CmsArticleListResponse
         (Json.field "articles" (Json.list decodeCmsArticle))
         (Json.maybe (Json.field "cursor_mark" Json.string))
+        (Json.field "before" JsonExtra.date)
 
 
 type alias CmsArticleListView =
     { articles : List CmsArticleView
     , cursorMark : Maybe String
-    , oldestCreatedAt : Maybe Date
+    , before : Date
     }
 
 
@@ -366,22 +368,8 @@ cmsArticleList2View resp =
                                     }
                 )
                 resp.articles
-
-        oldest =
-            List.head (List.reverse resp.articles)
-
-        oldestCreatedAt =
-            case oldest of
-                Nothing ->
-                    Nothing
-
-                Just a ->
-                    Just a.createdAt
     in
-        { articles = articles
-        , oldestCreatedAt = oldestCreatedAt
-        , cursorMark = resp.cursorMark
-        }
+        { resp | articles = articles }
 
 
 type ArticlePageState
@@ -445,7 +433,9 @@ type ArticleMsg
     | ArticleSubmitRequest ArticleDraft
     | ArticleSubmitResponse ArticleDraft String (Result Http.Error String)
     | ArticleClose
-    | ArticleReload
+    | ArticleReloadRequest
+    | ArticleReload Time
+    | ArticleRefresh
     | ArticleListLoaded String (Result Http.Error CmsArticleListResponse)
     | ArticleVersionSelect String String
     | ArticleOpenDraft ArticleDraft
@@ -455,6 +445,8 @@ type ArticleMsg
     | ArticlePublishResponse String (Result Http.Error String)
     | ArticleUnpublishRequest ArticleVersion
     | ArticleUnpublishResponse String (Result Http.Error String)
+    | ArticleMoreRequest
+    | ArticleMoreResponse String (Result Http.Error CmsArticleListResponse)
     | ArticleNoop
 
 

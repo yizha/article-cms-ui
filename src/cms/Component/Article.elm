@@ -33,7 +33,8 @@ import Task
 import Bitwise
 import Json.Decode as Json
 import Http
-import Date exposing (Date)
+import Time
+import Date exposing (Date, Month(..))
 import Date.Extra as DateExtra
 import Html exposing (Html, div, text, button, span, label, select, option, p)
 import Html.Attributes exposing (class, disabled, style, selected, value)
@@ -52,7 +53,7 @@ import MDC.Textfield as Textfield
 
 initArticles : CmsArticleListView
 initArticles =
-    CmsArticleListView [] Nothing Nothing
+    CmsArticleListView [] Nothing (DateExtra.fromCalendarDate 2999 Dec 31)
 
 
 initModel : ArticleModel
@@ -77,7 +78,7 @@ reload auth model =
         | state = ArticlePageListLoading
         , articles = initArticles
       }
-    , getArticles auth.token Nothing Nothing
+    , Task.perform ArticleReload Time.now
     )
 
 
@@ -134,6 +135,29 @@ handleArticleListLoaded path result model =
         Err err ->
             { model
                 | state = ArticlePageListLoadedFailure (AjaxError path err)
+                , edited = False
+            }
+
+
+handleMoreResponse : String -> Result Http.Error CmsArticleListResponse -> ArticleModel -> ArticleModel
+handleMoreResponse path result model =
+    case result of
+        Ok resp ->
+            let
+                listView =
+                    cmsArticleList2View resp
+
+                articles =
+                    model.articles.articles ++ listView.articles
+            in
+                { model
+                    | articles = { listView | articles = articles }
+                    , edited = False
+                }
+
+        Err err ->
+            { model
+                | state = ArticlePageListLoadedSuccess (Just (AjaxError path err))
                 , edited = False
             }
 
@@ -207,7 +231,7 @@ handleArticleDiscardResponse article path result model =
                 | state = ArticlePageListLoading
                 , edited = True
               }
-            , Task.perform (always ArticleReload) (Task.succeed True)
+            , Task.perform (always ArticleRefresh) (Task.succeed True)
             , True
             )
 
@@ -264,7 +288,7 @@ handleArticleSubmitResponse article path result model =
                 | state = ArticlePageListLoading
                 , edited = True
               }
-            , Task.perform (always ArticleReload) (Task.succeed True)
+            , Task.perform (always ArticleRefresh) (Task.succeed True)
             , True
             )
 
@@ -365,7 +389,7 @@ handleArticlePublishResponse path result model =
                 | state = ArticlePageListLoading
                 , edited = True
               }
-            , Task.perform (always ArticleReload) (Task.succeed True)
+            , Task.perform (always ArticleRefresh) (Task.succeed True)
             , True
             )
 
@@ -387,7 +411,7 @@ handleArticleUnpublishResponse path result model =
                 | state = ArticlePageListLoading
                 , edited = True
               }
-            , Task.perform (always ArticleReload) (Task.succeed True)
+            , Task.perform (always ArticleRefresh) (Task.succeed True)
             , True
             )
 
@@ -443,12 +467,32 @@ update_ msg auth model =
         ArticleClose ->
             handleArticleClose auth model
 
-        ArticleReload ->
+        ArticleReloadRequest ->
             let
                 ( m, c ) =
                     reload auth model
             in
                 ( m, c, True )
+
+        ArticleReload now ->
+            ( model
+            , getArticles
+                auth.token
+                Nothing
+                (DateExtra.add DateExtra.Day -3 (Date.fromTime now))
+                ArticleListLoaded
+            , True
+            )
+
+        ArticleRefresh ->
+            ( model
+            , getArticles
+                auth.token
+                Nothing
+                model.articles.before
+                ArticleListLoaded
+            , True
+            )
 
         ArticleListLoaded path result ->
             ( handleArticleListLoaded path result model, Cmd.none, False )
@@ -476,6 +520,19 @@ update_ msg auth model =
 
         ArticleUnpublishResponse path result ->
             handleArticleUnpublishResponse path result model
+
+        ArticleMoreRequest ->
+            ( model
+            , getArticles
+                auth.token
+                model.articles.cursorMark
+                (DateExtra.add DateExtra.Day -1 model.articles.before)
+                ArticleMoreResponse
+            , True
+            )
+
+        ArticleMoreResponse path result ->
+            ( handleMoreResponse path result model, Cmd.none, False )
 
 
 view : Model -> Html Msg
@@ -769,7 +826,7 @@ viewListActions auth lockUI model =
                 [ button
                     [ class "mdc-button mdc-button--raised"
                     , disabled (disableReload lockUI model)
-                    , onClick ArticleReload
+                    , onClick ArticleReloadRequest
                     ]
                     [ text "Reload" ]
                 ]
@@ -777,13 +834,15 @@ viewListActions auth lockUI model =
         ]
 
 
-viewLoadMore_ : AuthData -> Bool -> ArticleModel -> Html ArticleMsg
-viewLoadMore_ auth lockUI model =
+viewLoadMore_ : AuthData -> Bool -> Html ArticleMsg
+viewLoadMore_ auth lockUI =
     div [ class "mdc-layout-grid" ]
         [ div [ class "mdc-layout-grid__inner" ]
             [ div [ class "mdc-layout-grid__cell--span-12 mdc-layout-grid--align-left" ]
                 [ button
                     [ class "mdc-button mdc-button--raised"
+                    , disabled lockUI
+                    , onClick ArticleMoreRequest
                     ]
                     [ text "More" ]
                 ]
@@ -795,8 +854,8 @@ viewLoadMore : AuthData -> Bool -> ArticleModel -> Html ArticleMsg
 viewLoadMore auth lockUI model =
     case model.state of
         ArticlePageListLoadedSuccess _ ->
-            if model.articles.cursorMark /= Nothing then
-                viewLoadMore_ auth lockUI model
+            if ((List.length model.articles.articles) <= 0) || (model.articles.cursorMark /= Nothing) then
+                viewLoadMore_ auth lockUI
             else
                 div [] []
 
@@ -897,28 +956,21 @@ formatDate d =
     DateExtra.toUtcFormattedString "yyyy-MM-ddTHH:mm:ss.SSSZ" d
 
 
-getArticles : String -> Maybe String -> Maybe Date -> Cmd ArticleMsg
-getArticles token cursorMark createdAt =
+getArticles : String -> Maybe String -> Date -> (String -> Result Http.Error CmsArticleListResponse -> ArticleMsg) -> Cmd ArticleMsg
+getArticles token cursorMark date msg =
     let
+        before =
+            formatDate date
+
         path =
             case cursorMark of
                 Nothing ->
-                    case createdAt of
-                        Nothing ->
-                            "/api/articles"
-
-                        Just d ->
-                            "/api/articles?before=" ++ (formatDate d)
+                    "/api/articles?before=" ++ before
 
                 Just cm ->
-                    case createdAt of
-                        Nothing ->
-                            "/api/articles?cursorMark=" ++ cm
-
-                        Just d ->
-                            "/api/articles?cursorMark=" ++ cm ++ "&before=" ++ (formatDate d)
+                    "/api/articles?cursorMark=" ++ cm ++ "&before=" ++ before
     in
-        httpGetJson path token decodeCmsArticleListResponse (ArticleListLoaded path)
+        httpGetJson path token decodeCmsArticleListResponse (msg path)
 
 
 createArticle : AuthData -> Cmd ArticleMsg

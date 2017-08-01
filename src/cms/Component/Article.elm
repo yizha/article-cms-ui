@@ -49,6 +49,7 @@ import Common.Util
         , httpPostJson
         )
 import MDC.Textfield as Textfield
+import MDC.Textarea as Textarea
 
 
 initArticles : CmsArticleListView
@@ -62,8 +63,8 @@ initModel =
     , articles = initArticles
     , edited = False
     , headline = Textfield.init ArticleHeadline []
-    , summary = Textfield.init ArticleSummary []
-    , content = Textfield.init ArticleContent []
+    , summary = Textarea.init ArticleSummary [ Textarea.Rows 6 ]
+    , content = Textarea.init ArticleContent [ Textarea.Rows 10 ]
     }
 
 
@@ -188,17 +189,17 @@ openArticleDraft draft model =
                 ]
 
         sm =
-            Textfield.updateModel
+            Textarea.updateModel
                 model.summary
-                [ Textfield.Hint "Summary"
-                , Textfield.Value draft.summary
+                [ Textarea.Hint "Summary"
+                , Textarea.Value draft.summary
                 ]
 
         cm =
-            Textfield.updateModel
+            Textarea.updateModel
                 model.content
-                [ Textfield.Hint "Content"
-                , Textfield.Value draft.content
+                [ Textarea.Hint "Content"
+                , Textarea.Value draft.content
                 ]
     in
         { model
@@ -434,11 +435,11 @@ update_ msg auth model =
         ArticleHeadline tfm ->
             ( { model | headline = Textfield.update tfm model.headline }, Cmd.none, False )
 
-        ArticleSummary tfm ->
-            ( { model | summary = Textfield.update tfm model.summary }, Cmd.none, False )
+        ArticleSummary tam ->
+            ( { model | summary = Textarea.update tam model.summary }, Cmd.none, False )
 
-        ArticleContent tfm ->
-            ( { model | content = Textfield.update tfm model.content }, Cmd.none, False )
+        ArticleContent tam ->
+            ( { model | content = Textarea.update tam model.content }, Cmd.none, False )
 
         ArticleNewRequest ->
             ( model, createArticle auth, True )
@@ -900,8 +901,8 @@ viewEditing auth lockUI model article me =
         [ div [ style [ ( "color", "red" ) ] ] [ text (editingError me) ]
         , div [] [ label [ class "mdc-typography--title" ] [ text ("Article: " ++ article.id) ] ]
         , div [] [ Textfield.view (Textfield.updateModel model.headline [ Textfield.Disabled lockUI ]) ]
-        , div [] [ Textfield.view (Textfield.updateModel model.summary [ Textfield.Disabled lockUI ]) ]
-        , div [] [ Textfield.view (Textfield.updateModel model.content [ Textfield.Disabled lockUI ]) ]
+        , div [] [ Textarea.view (Textarea.updateModel model.summary [ Textarea.Disabled lockUI ]) ]
+        , div [] [ Textarea.view (Textarea.updateModel model.content [ Textarea.Disabled lockUI ]) ]
         , div []
             [ button
                 [ class "mdc-button mdc-button--raised"

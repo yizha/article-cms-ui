@@ -9,6 +9,7 @@ import Json.Encode as JsonEncode
 import Json.Decode as Json
 import Json.Decode.Extra as JsonExtra
 import MDC.Textfield as Textfield
+import MDC.Textarea as Textarea
 import Common.Debug exposing (debug)
 
 
@@ -384,8 +385,8 @@ type alias ArticleModel =
     , articles : CmsArticleListView
     , edited : Bool
     , headline : Textfield.Model ArticleMsg
-    , summary : Textfield.Model ArticleMsg
-    , content : Textfield.Model ArticleMsg
+    , summary : Textarea.Model ArticleMsg
+    , content : Textarea.Model ArticleMsg
     }
 
 
@@ -424,8 +425,8 @@ type LoginMsg
 
 type ArticleMsg
     = ArticleHeadline (Textfield.Msg ArticleMsg)
-    | ArticleSummary (Textfield.Msg ArticleMsg)
-    | ArticleContent (Textfield.Msg ArticleMsg)
+    | ArticleSummary (Textarea.Msg ArticleMsg)
+    | ArticleContent (Textarea.Msg ArticleMsg)
     | ArticleNewRequest
     | ArticleNewResponse String (Result Http.Error ArticleDraft)
     | ArticleDiscardRequest ArticleDraft

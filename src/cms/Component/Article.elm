@@ -303,11 +303,13 @@ handleArticleSubmitResponse article path result model =
 handleArticleClose : AuthData -> ArticleModel -> ( ArticleModel, Cmd ArticleMsg, Bool )
 handleArticleClose auth model =
     if model.edited then
-        let
-            ( m, c ) =
-                reload auth model
-        in
-            ( m, c, True )
+        ( { model
+            | state = ArticlePageListLoading
+            , edited = True
+          }
+        , Task.perform (always ArticleRefresh) (Task.succeed True)
+        , True
+        )
     else
         ( { model
             | state = ArticlePageListLoadedSuccess Nothing
